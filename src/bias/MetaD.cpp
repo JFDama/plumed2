@@ -244,6 +244,14 @@ class MetaD : public Bias {
       }
     }
   };
+  struct TemperingSpecs {
+    bool is_active;
+    std::string name_stem;
+    std::string name;
+    double biasf;
+    double threshold;
+    double alpha;
+  };
   vector<double> sigma0_;
   vector<double> sigma0min_;
   vector<double> sigma0max_;
@@ -257,20 +265,13 @@ class MetaD : public Bias {
   int wgridstride_;
   bool grid_, hasextgrid_;
   double height0_;
-  double biasf_;
   double kbt_;
   int stride_;
-  bool welltempered_;
-  double wt_biasthreshold_;
-  bool transitiontempered_;
-  double tt_biasf_;
-  double tt_biasthreshold_;
+  struct TemperingSpecs wt_specs_;
+  struct TemperingSpecs gat_specs_;
+  struct TemperingSpecs gmt_specs_;
+  struct TemperingSpecs tt_specs_;
   vector<vector<double> > transitionwells_;
-  double tt_alpha_;
-  bool globallytempered_;
-  double gt_biasf_;
-  double gt_biasthreshold_;
-  double gt_alpha_;
   string driving_work_argname_;
   Value* driving_work_arg_;
   std::string edm_readfilename_;
@@ -324,9 +325,9 @@ class MetaD : public Bias {
   int mw_rstride_;
   bool walkers_mpi;
   bool acceleration;
+  double acc;
   bool calc_average_bias_coft_;
   double average_bias_coft_;
-  double acc;
   vector<IFile*> ifiles;
   vector<string> ifilesnames;
   double uppI_;
@@ -336,11 +337,15 @@ class MetaD : public Bias {
   bool isFirstStep;
   long int last_step_warn_grid;
   
+  void   readTemperingSpecs(TemperingSpecs &t_specs);
+  void   logTempering(TemperingSpecs &t_specs);
+
   void   readGaussians(IFile*);
   bool   readChunkOfGaussians(IFile *ifile, unsigned n);
   void   writeGaussian(const Gaussian &, OFile &);
   void   addGaussian(const Gaussian &);
   void   addGaussianToGrid(const Gaussian &, Grid * const);
+  void   temperHeight(double &, const TemperingSpecs &, const double);
   double getHeight(const vector<double> &);
   double getTransitionBarrierBias();
   void   defineDomains(const Grid * const);
@@ -378,6 +383,18 @@ class MetaD : public Bias {
 
 PLUMED_REGISTER_ACTION(MetaD, "METAD")
 
+static vector<vector<std::string>> tempering_names({{"WT", "well tempered"}, {"GAT", "global average tempered"}, {"GMT", "global maximum tempered"}, {"TT", "transition tempered"}});
+
+void registerTemperingKeywords(std::string name_stem, std::string name, Keywords &keys) {
+  if (name_stem == "WT") {
+    keys.add("optional", "BIASFACTOR", "use " + name + " metadynamics with this biasfactor.  Please note you must also specify temp");
+  } else {
+    keys.add("optional", name_stem + "BIASFACTOR", "use " + name + " metadynamics with this biasfactor.  Please note you must also specify temp");
+  }
+  keys.add("optional", name_stem + "BIASTHRESHOLD", "use " + name + " metadynamics with this bias threshold.  Please note you must also specify " + name_stem + "BIASFACTOR");
+  keys.add("optional", name_stem + "ALPHA", "use " + name + " metadynamics with this hill size decay exponent parameter.  Please note you must also specify " + name_stem + "BIASFACTOR");
+}
+
 void MetaD::registerKeywords(Keywords &keys) {
   Bias::registerKeywords(keys);
   componentsAreNotOptional(keys);
@@ -391,15 +408,10 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.add("compulsory", "FILE", "HILLS", "a file in which the list of added hills is stored");
   keys.add("optional", "HEIGHT", "the heights of the Gaussian hills. Compulsory unless TAU, TEMP and BIASFACTOR are given");
   keys.add("optional", "FMT", "specify format for HILLS files (useful for decrease the number of digits in regtests)");
-  keys.add("optional", "BIASFACTOR", "use well tempered metadynamics and use this biasfactor.  Please note you must also specify temp");
-  keys.add("optional", "WTBIASTHRESHOLD", "use well tempered metadynamics with this bias threshold.  Please note you must also specify BIASFACTOR");
-  keys.add("optional", "TTBIASFACTOR", "use transition tempered metadynamics and use this biasfactor.  Please note you must also specify temp");
-  keys.add("optional", "TTBIASTHRESHOLD", "use transition tempered metadynamics with this bias threshold.  Please note you must also specify TTBIASFACTOR");
+  for (int i = 0; i < tempering_names.size(); i++) {
+    registerTemperingKeywords(tempering_names[i][0], tempering_names[i][1], keys);
+  }
   keys.add("numbered", "TRANSITIONWELL", "This keyword appears multiple times as TRANSITIONWELLx with x=0,1,2,...,n. Each specifies the coordinates for one well in transition-tempered metadynamics. At least one must be provided.");
-  keys.add("optional", "TTALPHA", "use transition tempered metadynamics with this decay shape parameter value between 0.5 and 1.0 (default 1.0).  Please note you must also specify TTBIASFACTOR");
-  keys.add("optional", "GTBIASFACTOR", "use globally tempered metadynamics and use this biasfactor.  Please note you must also specify temp");
-  keys.add("optional", "GTBIASTHRESHOLD", "use globally tempered metadynamics with this bias threshold.  Please note you must also specify GTBIASFACTOR");
-  keys.add("optional", "GTALPHA", "use globally tempered metadynamics with this decay shape parameter value between 0.5 and 1.0 (default 1.0).  Please note you must also specify GTBIASFACTOR");
   keys.add("optional", "EDM_RFILE", "use experiment-directed metadynamics with this file defining the desired target free energy");
   keys.add("optional", "DRIVING_WORK", "use driven metadynamics with this argument defining the work done by steering in the system (should be a work component of a MOVINGRESTRAINT)");
   keys.add("optional", "BENTHIC_TOLERATION", "use benthic metadynamics with this number of mistakes tolerated in transition states");
@@ -500,22 +512,36 @@ MetaD::~MetaD() {
   }
 }
 
+void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
+  // Set global tempering parameters.
+  parse(t_specs.name_stem + "BIASFACTOR", t_specs.biasf);
+  if (t_specs.biasf != 1.0) {
+    if (kbt_ == 0.0) {
+      error("Unless the MD engine passes the temperature to plumed, with tempered metad you must specify it using TEMP");
+    }
+    t_specs.is_active = true;
+    parse(t_specs.name_stem + "BIASTHRESHOLD", t_specs.threshold);
+    if (t_specs.threshold < 0.0) {
+      error(t_specs.name +" bias threshold is nonsensical");
+    }
+    parse(t_specs.name_stem + "ALPHA", t_specs.alpha);
+    if (t_specs.alpha <= 0.0 || t_specs.alpha > 1.0) {
+      error(t_specs.name + " decay shape parameter alpha is nonsensical");
+    }
+  }
+}
+
 MetaD::MetaD(const ActionOptions &ao):
   PLUMED_BIAS_INIT(ao),
   // Grid stuff default initialization
   BiasGrid_(NULL), ExtGrid_(NULL), wgridstride_(0), grid_(false), hasextgrid_(false),
   // Metadynamics basic parameters
-  height0_(std::numeric_limits<double>::max()), biasf_(1.0), kbt_(0.0),
-  stride_(0), welltempered_(false),
-  wt_biasthreshold_(0.0),
-  transitiontempered_(false),
-  tt_biasf_(1.0),
-  tt_biasthreshold_(0.0),
-  tt_alpha_(1.0),
-  globallytempered_(false),
-  gt_biasf_(1.0),
-  gt_biasthreshold_(0.0),
-  gt_alpha_(1.0),
+  height0_(std::numeric_limits<double>::max()), kbt_(0.0),
+  stride_(0), 
+  wt_specs_({false, "WT", "Well Tempered", 1.0, 0.0, 1.0}),
+  gat_specs_({false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0}),
+  gmt_specs_({false, "GMT", "Global Maximum Tempered", 1.0, 0.0, 1.0}),
+  tt_specs_({false, "TT", "Transition Tempered", 1.0, 0.0, 1.0}),
   benthic_toleration_(false),
   benthic_tol_number_(0.0),
   benthic_erosion_(false),
@@ -634,68 +660,20 @@ MetaD::MetaD(const ActionOptions &ao):
   }
 
   // Set well tempering parameters.
-  parse("BIASFACTOR", biasf_);
-  if (biasf_ < 1.0) {
-    error("well tempered bias factor is nonsensical");
+  readTemperingSpecs(wt_specs_);
+  if (wt_specs_.is_active && wt_specs_.alpha != 1.0) {
+    error("Well tempered is not compatible with choice of ALPHA");
   }
-  if (biasf_ > 1.0) {
-    if (kbt_ == 0.0) {
-      error("Unless the MD engine passes the temperature to plumed, with well-tempered metad you must specify it using TEMP");
-    }
-    welltempered_ = true;
-    parse("WTBIASTHRESHOLD", wt_biasthreshold_);
-    if (wt_biasthreshold_ < 0.0) {
-      error("well tempered bias threshold is nonsensical");
-    }
-  }
+
+  // Set global average tempering parameters.
+  readTemperingSpecs(gat_specs_);
+
+  // Set global average tempering parameters.
+  readTemperingSpecs(gmt_specs_);
 
   // Set transition tempering parameters.
-  parse("TTBIASFACTOR", tt_biasf_);
-  if (tt_biasf_ < 1.0) {
-    error("transition tempered bias factor is nonsensical");
-  }
-  if (tt_biasf_ > 1.0) {
-    if (kbt_ == 0.0) {
-      error("Unless the MD engine passes the temperature to plumed, with transition-tempered metad you must specify it using TEMP");
-    }
-    transitiontempered_ = true;
-    parse("TTBIASTHRESHOLD", tt_biasthreshold_);
-    if (tt_biasthreshold_ < 0.0) {
-      error("transition tempered bias threshold is nonsensical");
-    }
-    parse("TTALPHA", tt_alpha_);
-    if (tt_alpha_ < 0.5 || tt_alpha_ > 1.0) {
-      error("transition tempered decay shape parameter alpha is nonsensical");
-    }
-    vector<double> tempcoords(getNumberOfArguments());    
-    for (unsigned i = 0; ; i++) {
-      if (!parseNumberedVector("TRANSITIONWELL", i, tempcoords) ) break;
-      if (tempcoords.size() != getNumberOfArguments()) {
-        error("incorrect number of coordinates for transition tempering well");
-      }
-      transitionwells_.push_back(tempcoords);
-    }
-  }
-
-  // Set global tempering parameters.
-  parse("GTBIASFACTOR", gt_biasf_);
-  if (gt_biasf_ < 1.0) {
-    error("globally tempered bias factor is nonsensical");
-  }
-  if (gt_biasf_ > 1.0) {
-    if (kbt_ == 0.0) {
-      error("Unless the MD engine passes the temperature to plumed, with globally-tempered metad you must specify it using TEMP");
-    }
-    globallytempered_ = true;
-    parse("GTBIASTHRESHOLD", gt_biasthreshold_);
-    if (gt_biasthreshold_ < 0.0) {
-      error("well tempered bias threshold is nonsensical");
-    }
-    parse("GTALPHA", gt_alpha_);
-    if (gt_alpha_ < 0.5 || gt_alpha_ > 1.0) {
-      error("globally tempered decay shape parameter alpha is nonsensical");
-    }
-  }
+  // Transition wells are read later.
+  readTemperingSpecs(tt_specs_);
 
   parse("EDM_RFILE", edm_readfilename_);
   if (edm_readfilename_.size() > 0) {
@@ -728,7 +706,6 @@ MetaD::MetaD(const ActionOptions &ao):
   }
 
   // Check for a benthic metadynamics toleration threshold.
-  // Wait to set the energy threshold until the hill height is parsed.
   parse("BENTHIC_TOLERATION", benthic_tol_number_);
   if (benthic_tol_number_ > 0.0) {
     benthic_toleration_ = true;
@@ -755,17 +732,17 @@ MetaD::MetaD(const ActionOptions &ao):
       error("At least one between HEIGHT and TAU should be specified");
     }
     // if tau is not set, we compute it here from the other input parameters
-    if (welltempered_) {
-      tau = (kbt_ * (biasf_ - 1.0)) / height0_ * getTimeStep() * stride_;
+    if (wt_specs_.is_active) {
+      tau = (kbt_ * (wt_specs_.biasf - 1.0)) / height0_ * getTimeStep() * stride_;
     }
   } else {
-    if (!welltempered_) {
+    if (!wt_specs_.is_active) {
       error("TAU only makes sense in tempered metadynamics");
     }
     if (height0_ != std::numeric_limits<double>::max()) {
       error("At most one between HEIGHT and TAU should be specified");
     }
-    height0_ = (kbt_ * (biasf_ - 1.0)) / tau * getTimeStep() * stride_;
+    height0_ = (kbt_ * (wt_specs_.biasf - 1.0)) / tau * getTimeStep() * stride_;
   }
 
   // Set grid parameters.
@@ -915,6 +892,17 @@ MetaD::MetaD(const ActionOptions &ao):
     parseFlag("PRINT_DOMAINS_SCALING", print_domains_scaling_);
   }
 
+  if (tt_specs_.is_active || (use_adaptive_domains_ && adaptive_domains_reftype_ == kTransitionRef)) {
+    vector<double> tempcoords(getNumberOfArguments());    
+    for (unsigned i = 0; ; i++) {
+      if (!parseNumberedVector("TRANSITIONWELL", i, tempcoords) ) break;
+      if (tempcoords.size() != getNumberOfArguments()) {
+        error("incorrect number of coordinates for transition tempering well");
+      }
+      transitionwells_.push_back(tempcoords);
+    }
+  }
+
   parseFlag("RESTART_FROM_GRID", restart_from_grid_);
   if (restart_from_grid_ && gridreadfilename_.size() == 0) {
     error("RESTART_FROM_GRID requires an input GRID_RFILE");
@@ -969,32 +957,88 @@ MetaD::MetaD(const ActionOptions &ao):
   log.printf("  Gaussian height %f\n", height0_);
   log.printf("  Gaussian deposition pace %d\n", stride_);
   log.printf("  Gaussian file %s\n", hillsfname.c_str());
-  if (welltempered_) {
-    log.printf("  Well-Tempered bias factor %f\n", biasf_);
+  if (wt_specs_.is_active) {
+    logTempering(tt_specs_);
     log.printf("  Hills relaxation time (tau) %f\n", tau);
-    log.printf("  KbT %f\n", kbt_);
-    if (wt_biasthreshold_ != 0.0) {
-      log.printf("  Well-Tempered bias threshold %f\n", wt_biasthreshold_);
+  }
+  // Global average tempered metadynamics options
+  if (gat_specs_.is_active) {
+    logTempering(gat_specs_);
+    // Check that the average bias is being calculated.
+    if (!calc_average_bias_coft_) {
+      error(" global average tempering requires calculation of the average bias");
+    }
+  }
+  // Global maximum tempered metadynamics options
+  if (gmt_specs_.is_active) {
+    logTempering(gmt_specs_);
+    // Check that a grid bias is being calculated.
+    if (!grid_) {
+      error(" global maximum tempering requires a grid for the bias");
     }
   }
   // Transition tempered metadynamics options
-  if (transitiontempered_) {
-    log.printf("  Transition-Tempered bias factor %f\n", tt_biasf_);
-    log.printf("  Transition-Tempered bias threshold %f\n", tt_biasthreshold_);
-    log.printf("  Transition-Tempered decay shape parameter alpha %f\n", tt_alpha_);
+  if (tt_specs_.is_active) {
+    logTempering(tt_specs_);
+    if (transitionwells_.size() == 0) {
+      error("transition tempering requires definition of at least one transition well");
+    }
+  }
+  // Overall tempering sanity check (this gets tricky when multiple are active).
+  if (wt_specs_.is_active || gat_specs_.is_active || gmt_specs_.is_active || tt_specs_.is_active) {
+    int n_active = 0;
+    if (wt_specs_.is_active) n_active++;
+    if (gat_specs_.is_active) n_active++;
+    if (gmt_specs_.is_active) n_active++;
+    if (tt_specs_.is_active) n_active++;
+    double greatest_alpha = 0.0;
+    if (wt_specs_.is_active) greatest_alpha = max(greatest_alpha, wt_specs_.alpha);
+    if (gat_specs_.is_active) greatest_alpha = max(greatest_alpha, gat_specs_.alpha);
+    if (gmt_specs_.is_active) greatest_alpha = max(greatest_alpha, gmt_specs_.alpha);
+    if (tt_specs_.is_active) greatest_alpha = max(greatest_alpha, tt_specs_.alpha);
+    double least_alpha = 1.0;
+    if (wt_specs_.is_active) least_alpha = min(least_alpha, wt_specs_.alpha);
+    if (gat_specs_.is_active) least_alpha = min(least_alpha, gat_specs_.alpha);
+    if (gmt_specs_.is_active) least_alpha = min(least_alpha, gmt_specs_.alpha);
+    if (tt_specs_.is_active) least_alpha = min(least_alpha, tt_specs_.alpha);
+    double total_deltaT_inv = 0.0;
+    if (wt_specs_.is_active && wt_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (wt_specs_.biasf - 1.0); 
+    if (gat_specs_.is_active && gat_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (gat_specs_.biasf - 1.0); 
+    if (gmt_specs_.is_active && gmt_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (gmt_specs_.biasf - 1.0); 
+    if (tt_specs_.is_active && tt_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (tt_specs_.biasf - 1.0); 
+    if (n_active == 1 && total_deltaT_inv < 1.0) {
+      error("for stable tempering, the bias factor must be greater than one");
+    } else if (total_deltaT_inv < 0.0 && greatest_alpha == least_alpha) {
+      error("for stable tempering, the sum of the inverse Delta T parameters must be greater than or equal to zero!");
+    } else if (total_deltaT_inv < 0.0 && greatest_alpha != least_alpha) {
+      error("for stable tempering, the sum of the inverse Delta T parameters for the greatest asymptotic hill decay exponents must be greater than or equal to zero!");
+    }
+  }
+  // Transition wells for adaptive domains or transition tempering
+  if (transitionwells_.size() > 0) {
     log.printf("  Number of transition wells %d\n", transitionwells_.size());
+    // Check that a grid is in use.
+    if (!grid_) {
+      error(" transition barrier finding requires a grid for the bias");
+    }
+    // Log the wells and check that they are in the grid.
     for (unsigned i = 0; i < transitionwells_.size(); i++) {
       log.printf("  Transition well %d at coordinate ", i);
       for (unsigned j = 0; j < getNumberOfArguments(); j++) {
         log.printf("%f ", transitionwells_[i][j]);
       }
       log.printf("\n", i);
+      // For each dimension, check that the transition well coordinates are in the grid.
+      for (unsigned j = 0; j < getNumberOfArguments(); j++) {
+        double max, min;
+        Tools::convert(gmin[j], min);
+        Tools::convert(gmax[j], max);
+        if (transitionwells_[i][j] < min || transitionwells_[i][j] > max) {
+          error(" transition well is not in grid");
+        }
+      }
     }
-    log.printf("  KbT %f\n", kbt_);
-    // Check that a grid is in use.
-    if (!grid_) {
-      error(" transition tempering requires a grid for the bias");
-    }
+
     // For each dimension, check that the transition well coordinates are in the grid.
     for (unsigned i = 0; i < getNumberOfArguments(); i++) {
       double max, min;
@@ -1005,17 +1049,6 @@ MetaD::MetaD(const ActionOptions &ao):
           error(" transition well is not in grid");
         }
       }
-    }
-  }
-  // Globally tempered metadynamics options
-  if (globallytempered_) {
-    log.printf("  Globally-Tempered bias factor %f\n", gt_biasf_);
-    log.printf("  Globally-Tempered bias threshold %f\n", gt_biasthreshold_);
-    log.printf("  Globally-Tempered decay shape parameter alpha %f\n", gt_alpha_);
-    log.printf("  KbT %f\n", kbt_);
-    // Check that the average bias is being calculated.
-    if (!calc_average_bias_coft_) {
-      error(" global tempering requires calculation of the average bias");
     }
   }
   // Experiment-directed metadynamics
@@ -1120,8 +1153,8 @@ MetaD::MetaD(const ActionOptions &ao):
     }
     if (use_adaptive_domains_) {
       if (adaptive_domains_reftype_ == kTransitionRef) {
-        if (!transitiontempered_) {
-          error(" using transition-referenced adaptive domains requires transition tempering");
+        if (transitionwells_.size() == 0) {
+          error(" using transition-referenced adaptive domains requires defined transition wells");
         } else {
           log.printf("  Using adaptive domain with a free energy limit of the transition barrier free energy");
         }
@@ -1508,10 +1541,12 @@ MetaD::MetaD(const ActionOptions &ao):
 
   // Print citatation suggestions for the specific methods used to the log.
   log << "  Bibliography " << plumed.cite("Laio and Parrinello, PNAS 99, 12562 (2002)");
-  if (welltempered_) log << plumed.cite(
+  if (wt_specs_.is_active) log << plumed.cite(
      "Barducci, Bussi, and Parrinello, Phys. Rev. Lett. 100, 020603 (2008)");
-  if (transitiontempered_) log << plumed.cite(
+  if (tt_specs_.is_active) log << plumed.cite(
      "Dama, Rotskoff, Parrinello, and Voth, J. Chem. Theory Comput. 10, 3626 (2014)");
+  if (wt_specs_.is_active || tt_specs_.is_active || gat_specs_.is_active || gmt_specs_.is_active) log << plumed.cite(
+    "Dama, Parrinello, and Voth, Phys. Rev. Lett. 112, 240602 (2014)");
   if (edm_readfilename_.size() > 0) {
     log << plumed.cite("White, Dama, and Voth, J. Chem. Theory Comput. 11, 2451 (2015)");
     log << plumed.cite("Marinelli and Faraldo-Gomez, Biophys. J. 108, 2779 (2015)");
@@ -1547,8 +1582,8 @@ void MetaD::readGaussians(IFile *ifile) {
   }
   while (scanOneHill(ifile, tmpvalues, center, sigma, height, multivariate)) {
     nhills++;
-    if (welltempered_) {
-      height *= (biasf_ - 1.0) / biasf_;
+    if (wt_specs_.is_active) {
+      height *= (wt_specs_.biasf - 1.0) / wt_specs_.biasf;
     }
     addGaussian(Gaussian(center, sigma, height, multivariate));
   }
@@ -1567,8 +1602,8 @@ bool MetaD::readChunkOfGaussians(IFile *ifile, unsigned n) {
     tmpvalues.push_back(Value(this, getPntrToArgument(j)->getName(), false));
   }
   while (scanOneHill(ifile, tmpvalues, center, sigma, height, multivariate)) {
-    if (welltempered_) {
-      height *= (biasf_ - 1.0) / biasf_;
+    if (wt_specs_.is_active) {
+      height *= (wt_specs_.biasf - 1.0) / wt_specs_.biasf;
     }
     addGaussian(Gaussian(center, sigma, height, multivariate));
     if (nhills == n) {
@@ -1625,10 +1660,10 @@ void MetaD::writeGaussian(const Gaussian &hill, OFile &file) {
     }
   }
   double height = hill.height;
-  if (welltempered_) {
-    height *= biasf_ / (biasf_ - 1.0);
+  if (wt_specs_.is_active) {
+    height *= wt_specs_.biasf / (wt_specs_.biasf - 1.0);
   }
-  file.printField("height", height).printField("biasf", biasf_);
+  file.printField("height", height).printField("biasf", wt_specs_.biasf);
   if (mw_n_ > 1) {
     file.printField("clock", int(time(0)));
   }
@@ -1966,33 +2001,34 @@ double MetaD::evaluateGaussian(const vector<double> &cv, const Gaussian &hill, d
   return bias;
 }
 
+void MetaD::temperHeight(double &height, const TemperingSpecs &t_specs, const double bias) {
+  if (t_specs.alpha == 1.0) {
+    height *= exp(-max(0.0, bias - t_specs.threshold) / (kbt_ * (t_specs.biasf - 1.0)));
+  } else {
+    height *= pow(1 + (1 - t_specs.alpha) / t_specs.alpha * max(0.0, bias - t_specs.threshold) / (kbt_ * (t_specs.biasf - 1.0)), - t_specs.alpha / (1 - t_specs.alpha));
+  }
+}
+
 double MetaD::getHeight(const vector<double> &cv) {
   double height = height0_;
-  if (welltempered_) {
+  if (wt_specs_.is_active) {
     double vbias = getBiasAndDerivatives(cv);
-    height *= exp(-max(0.0, vbias - wt_biasthreshold_) / (kbt_ * (biasf_ - 1.0)));
+    temperHeight(height, wt_specs_, vbias);
   }
-  if (transitiontempered_) {
+  if (tt_specs_.is_active) {
     double vbarrier = getTransitionBarrierBias();
-    if (tt_alpha_ == 1.0) {
-      height *= exp(-max(0.0, vbarrier - tt_biasthreshold_) / (kbt_ * (tt_biasf_ - 1.0)));
-    } else {
-      height *= pow(1 + (1 - tt_alpha_) / tt_alpha_ * max(0.0, vbarrier - tt_biasthreshold_) / (kbt_ * (tt_biasf_ - 1.0)), - tt_alpha_ / (1 - tt_alpha_));
-    }
+    temperHeight(height, tt_specs_, vbarrier);
   }
-  if (globallytempered_) {
-    if (gt_alpha_ == 1.0) {
-      height *= exp(-max(0.0, average_bias_coft_ - gt_biasthreshold_) / (kbt_ * (gt_biasf_ - 1.0)));
-    } else {
-      height *= pow(1 + (1 - gt_alpha_) / gt_alpha_ * max(0.0, average_bias_coft_ - gt_biasthreshold_) / (kbt_ * (gt_biasf_ - 1.0)), - gt_alpha_ / (1 - gt_alpha_));
-    }
+  if (gat_specs_.is_active) {
+    temperHeight(height, tt_specs_, average_bias_coft_);
   }
   if (driving_work_argname_.size() > 0) {
     height *= exp(-driving_work_arg_->get() / kbt_);
   }
   if (edm_readfilename_.size() > 0) {
-    height = min(height0_, height * exp(EDMTarget_->getValue(cv) / kbt_));
+    height *= exp(EDMTarget_->getValue(cv) / kbt_);
   }
+  height = min(height, height0_);
   if (benthic_toleration_) {
     if (BenthicHistogram_->getValue(BiasGrid_->getIndex(cv)) < benthic_tol_number_) {
       height = 0.0;
@@ -2291,8 +2327,8 @@ void MetaD::createScalingGrids() {
       }
     }
 
-    // Rescale the base scaling function using the min of the boundary values.
-    // This sets the scaling function to have a minimum of one on the boundary.
+    // Rescale the base scaling function using the average of the boundary values.
+    // This sets the scaling function to have an average of one on the boundary.
     double boundary_ave = 0.0;
     for (unsigned j = 1; j < domain_boundary_pts_[i].size(); j++) {
       boundary_ave += newScalingGrid->getValue(domain_boundary_pts_[i][j]);
@@ -2342,8 +2378,8 @@ bool MetaD::shouldAdaptDomainsNow() {
       trigger_bias = getTransitionBarrierBias();
     }
     // Rescale the bias to match a free energy estimate as needed.
-    if (welltempered_) {
-      trigger_bias *= biasf_ / (biasf_ - 1.0);
+    if (wt_specs_.is_active) {
+      trigger_bias *= wt_specs_.biasf / (wt_specs_.biasf - 1.0);
     }
     // If the trigger is not passed, continue the delay.
     if (trigger_bias <= adaptive_domains_eoffset_) {
@@ -2676,7 +2712,7 @@ void MetaD::update() {
     }
   }
   // Calculate the new average bias after any bias update.
-  // This follows the Tiwary and Parrinello JPCB paper.
+  // This does not follow the Tiwary and Parrinello JPCB paper.
   if (calc_average_bias_coft_ && (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0))) {
     // Calc sums rather than integrals because the normalization
     // is irrelevant.
@@ -2687,17 +2723,17 @@ void MetaD::update() {
     // For reasons I don't understand, the first branch of the if
     // statement can't be followed unless I flush the log first.
     log.flush();
-    if (biasf_ == 1.0) {
+    if (wt_specs_.biasf == 1.0) {
       for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
         double pt_bias = BiasGrid_->getValue(i);
         exp_free_energy_sum += exp(pt_bias / kbt_);
         exp_biased_free_energy_sum += 1.0;
       }
-    } else if (biasf_ > 1.0) {
+    } else if (wt_specs_.biasf > 1.0) {
       for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
         double pt_bias = BiasGrid_->getValue(i);
-        exp_free_energy_sum += exp(biasf_ * pt_bias / (kbt_  * (biasf_ - 1)));
-        exp_biased_free_energy_sum += exp(pt_bias / (kbt_ * (biasf_ - 1)));
+        exp_free_energy_sum += exp(wt_specs_.biasf * pt_bias / (kbt_  * (wt_specs_.biasf - 1)));
+        exp_biased_free_energy_sum += exp(pt_bias / (kbt_ * (wt_specs_.biasf - 1)));
       }
     }
     average_bias_coft_ = kbt_ * ( std::log(exp_free_energy_sum) - std::log(exp_biased_free_energy_sum));
@@ -2864,6 +2900,13 @@ void MetaD::dumpGrid(Grid *grid, OFile &gridfile) {
   if (!storeOldGrids_) {
     gridfile.flush();
   }
+}
+
+void MetaD::logTempering(TemperingSpecs &t_specs) {
+  log.printf("  %s bias factor %f\n", t_specs.name.c_str(), tt_specs_.biasf);
+  log.printf("  KbT %f\n", kbt_);
+  if (tt_specs_.threshold != 0.0) log.printf("  %s bias threshold %f\n", t_specs.name.c_str(), tt_specs_.threshold);
+  if (tt_specs_.alpha != 1.0) log.printf("  %s decay shape parameter alpha %f\n", t_specs.name.c_str(), tt_specs_.alpha);
 }
 
 }
