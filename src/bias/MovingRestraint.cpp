@@ -261,10 +261,10 @@ void MovingRestraint::calculate(){
   unsigned curr_restraint_step=getRestraintStep();
   std::vector<double> kk(narg),aa(narg),f(narg),dpotdk(narg);
   
-  if(!equilibration[curr_restraint_step]){
-    getPntrToComponent("in_equil")->set(0.0);
-  } else {
+  if(equilibration[curr_restraint_step]){
     getPntrToComponent("in_equil")->set(1.0);
+  } else {
+    getPntrToComponent("in_equil")->set(0.0);
   }
 
   if(curr_restraint_step == 0){

@@ -2033,7 +2033,7 @@ double MetaD::getHeight(const vector<double> &cv) {
     temperHeight(height, tt_specs_, vbarrier);
   }
   if (driving_restraint_argname_.size() > 0) {
-    if (driving_in_equil_arg_->get() != 0.0) {
+    if (driving_in_equil_arg_->get() != 1.0) {
       height *= exp(-driving_work_arg_->get() / kbt_);
     } else {
       height = 0.0;
