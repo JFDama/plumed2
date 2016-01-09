@@ -149,6 +149,7 @@ void MovingRestraint::registerKeywords( Keywords& keys ){
   keys.addOutputComponent("bias","default","the instantaneous value of the bias potential");
   keys.addOutputComponent("work","default","the total work performed changing this restraint");
   keys.addOutputComponent("force2","default","the instantaneous value of the squared force due to this bias potential");
+  keys.addOutputComponent("in_equil","default","whether (1.0) or not (0.0) the current step is an equilibration.");
   keys.addOutputComponent("_cntr","default","one or multiple instances of this quantity will be refereceable elsewhere in the input file. "
                                             "these quantities will named with  the arguments of the bias followed by "
                                             "the character string _cntr. These quantities give the instantaneous position "
@@ -225,6 +226,8 @@ verse(getNumberOfArguments())
   }
   addComponent("work"); componentIsNotPeriodic("work");
   tot_work=0.0;
+  addComponent("in_equil"); componentIsNotPeriodic("in_equil");
+  getPntrToComponent("in_equil")->set(0.0);
 
   log<<"  Bibliography ";
   log<<cite("Grubmuller, Heymann, and Tavan, Science 271, 997 (1996)")<<"\n";
@@ -258,6 +261,12 @@ void MovingRestraint::calculate(){
   unsigned curr_restraint_step=getRestraintStep();
   std::vector<double> kk(narg),aa(narg),f(narg),dpotdk(narg);
   
+  if(!equilibration[curr_restraint_step]){
+    getPntrToComponent("in_equil")->set(0.0);
+  } else {
+    getPntrToComponent("in_equil")->set(1.0);
+  }
+
   if(curr_restraint_step == 0){
     kk=kappa[0];
     aa=at[0];

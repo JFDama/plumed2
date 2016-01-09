@@ -244,6 +244,8 @@ class MetaD : public Bias {
       }
     }
   };
+  static const int n_tempering_options = 4;
+  static const std::string tempering_names[4][2];
   struct TemperingSpecs {
     bool is_active;
     std::string name_stem;
@@ -251,6 +253,9 @@ class MetaD : public Bias {
     double biasf;
     double threshold;
     double alpha;
+    inline TemperingSpecs(bool is_active, std::string name_stem, std::string name, double biasf, double threshold, double alpha) : 
+    is_active(is_active), name_stem(name_stem), name(name), biasf(biasf), threshold(threshold), alpha(alpha) 
+    {}
   };
   vector<double> sigma0_;
   vector<double> sigma0min_;
@@ -272,8 +277,9 @@ class MetaD : public Bias {
   struct TemperingSpecs gmt_specs_;
   struct TemperingSpecs tt_specs_;
   vector<vector<double> > transitionwells_;
-  string driving_work_argname_;
+  string driving_restraint_argname_;
   Value* driving_work_arg_;
+  Value* driving_in_equil_arg_;
   std::string edm_readfilename_;
   Grid *EDMTarget_;
   bool benthic_toleration_;
@@ -383,7 +389,7 @@ class MetaD : public Bias {
 
 PLUMED_REGISTER_ACTION(MetaD, "METAD")
 
-static vector<vector<std::string>> tempering_names({{"WT", "well tempered"}, {"GAT", "global average tempered"}, {"GMT", "global maximum tempered"}, {"TT", "transition tempered"}});
+const std::string MetaD::tempering_names[4][2] = {{"WT", "well tempered"}, {"GAT", "global average tempered"}, {"GMT", "global maximum tempered"}, {"TT", "transition tempered"}};
 
 void registerTemperingKeywords(std::string name_stem, std::string name, Keywords &keys) {
   if (name_stem == "WT") {
@@ -408,12 +414,12 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.add("compulsory", "FILE", "HILLS", "a file in which the list of added hills is stored");
   keys.add("optional", "HEIGHT", "the heights of the Gaussian hills. Compulsory unless TAU, TEMP and BIASFACTOR are given");
   keys.add("optional", "FMT", "specify format for HILLS files (useful for decrease the number of digits in regtests)");
-  for (int i = 0; i < tempering_names.size(); i++) {
+  for (int i = 0; i < n_tempering_options; i++) {
     registerTemperingKeywords(tempering_names[i][0], tempering_names[i][1], keys);
   }
   keys.add("numbered", "TRANSITIONWELL", "This keyword appears multiple times as TRANSITIONWELLx with x=0,1,2,...,n. Each specifies the coordinates for one well in transition-tempered metadynamics. At least one must be provided.");
   keys.add("optional", "EDM_RFILE", "use experiment-directed metadynamics with this file defining the desired target free energy");
-  keys.add("optional", "DRIVING_WORK", "use driven metadynamics with this argument defining the work done by steering in the system (should be a work component of a MOVINGRESTRAINT)");
+  keys.add("optional", "DRIVING_RESTRAINT", "use driven metadynamics with this argument defining the steering action acting on the system (should be a MOVINGRESTRAINT)");
   keys.add("optional", "BENTHIC_TOLERATION", "use benthic metadynamics with this number of mistakes tolerated in transition states");
   keys.add("optional", "BENTHIC_FILTER_STRIDE", "use benthic metadynamics accumulating filter samples on this timescale in units of simulation time.  Please note you must also specify BENTHIC_TOLERATION");
   keys.add("optional", "BENTHIC_EROSION", "use benthic metadynamics with erosion on this boosted timescale in units of simulation time.  Please note you must also specify BENTHIC_TOLERATION");
@@ -514,7 +520,11 @@ MetaD::~MetaD() {
 
 void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
   // Set global tempering parameters.
-  parse(t_specs.name_stem + "BIASFACTOR", t_specs.biasf);
+  if (t_specs.name_stem != "WT") {
+    parse(t_specs.name_stem + "BIASFACTOR", t_specs.biasf);
+  } else {
+    parse("BIASFACTOR", t_specs.biasf);
+  }
   if (t_specs.biasf != 1.0) {
     if (kbt_ == 0.0) {
       error("Unless the MD engine passes the temperature to plumed, with tempered metad you must specify it using TEMP");
@@ -522,7 +532,7 @@ void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
     t_specs.is_active = true;
     parse(t_specs.name_stem + "BIASTHRESHOLD", t_specs.threshold);
     if (t_specs.threshold < 0.0) {
-      error(t_specs.name +" bias threshold is nonsensical");
+      error(t_specs.name + " bias threshold is nonsensical");
     }
     parse(t_specs.name_stem + "ALPHA", t_specs.alpha);
     if (t_specs.alpha <= 0.0 || t_specs.alpha > 1.0) {
@@ -538,10 +548,10 @@ MetaD::MetaD(const ActionOptions &ao):
   // Metadynamics basic parameters
   height0_(std::numeric_limits<double>::max()), kbt_(0.0),
   stride_(0), 
-  wt_specs_({false, "WT", "Well Tempered", 1.0, 0.0, 1.0}),
-  gat_specs_({false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0}),
-  gmt_specs_({false, "GMT", "Global Maximum Tempered", 1.0, 0.0, 1.0}),
-  tt_specs_({false, "TT", "Transition Tempered", 1.0, 0.0, 1.0}),
+  wt_specs_(false, "WT", "Well Tempered", 1.0, 0.0, 1.0),
+  gat_specs_(false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0),
+  gmt_specs_(false, "GMT", "Global Maximum Tempered", 1.0, 0.0, 1.0),
+  tt_specs_(false, "TT", "Transition Tempered", 1.0, 0.0, 1.0),
   benthic_toleration_(false),
   benthic_tol_number_(0.0),
   benthic_erosion_(false),
@@ -682,26 +692,21 @@ MetaD::MetaD(const ActionOptions &ao):
     }
   }
 
-  parse("DRIVING_WORK", driving_work_argname_);
-  if (driving_work_argname_.size() > 0) {
+  parse("DRIVING_RESTRAINT", driving_restraint_argname_);
+  if (driving_restraint_argname_.size() > 0) {
     if (kbt_ == 0.0) {
       error("Unless the MD engine passes the temperature to plumed, with driven metad you must specify it using TEMP");
     }
     // Find the Value* corresponding to the driving work argument.
     vector<Value *> driving_work_arg_wrapper;
-    interpretArgumentList(vector<string>(1, driving_work_argname_), driving_work_arg_wrapper);
+    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".work"), driving_work_arg_wrapper);
     driving_work_arg_ = driving_work_arg_wrapper[0];
-    // Add a dependency on the driving work argument's corresponding ActionWithValue.
-    std::string fullname, name;
-    fullname = driving_work_arg_->getName();
-    if(fullname.find(".") != string::npos){
-      std::size_t dot = fullname.find_first_of('.');
-      name = fullname.substr(0,dot);
-    } else {
-      name = fullname;
-    }
-    ActionWithValue* action = plumed.getActionSet().selectWithLabel<ActionWithValue*>(name);
-    plumed_massert(action,"cannot find action named (in requestArguments - this is weird)" + name);
+    vector<Value *> driving_in_equil_arg_wrapper;
+    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".in_equil"), driving_in_equil_arg_wrapper);
+    driving_in_equil_arg_ = driving_in_equil_arg_wrapper[0];
+    // Add a dependency on the corresponding ActionWithValue.
+    ActionWithValue* action = plumed.getActionSet().selectWithLabel<ActionWithValue*>(driving_restraint_argname_);
+    plumed_massert(action,"cannot find action named (in requestArguments - this is weird)" + driving_restraint_argname_);
     addDependency(action);
   }
 
@@ -1056,8 +1061,8 @@ MetaD::MetaD(const ActionOptions &ao):
     log.printf("  Reading a target distribution from grid in file %s \n", edm_readfilename_.c_str());
   }
   // Driven metadynamics
-  if (driving_work_argname_.length() > 0) {
-    log.printf("  Using driven metadynamics with steered MD work given by %s \n", driving_work_argname_.c_str());
+  if (driving_restraint_argname_.length() > 0) {
+    log.printf("  Using driven metadynamics with steered MD work given by %s \n", driving_restraint_argname_.c_str());
   }
   // Benthic metadynamics options
   if (benthic_toleration_) {
@@ -1551,7 +1556,7 @@ MetaD::MetaD(const ActionOptions &ao):
     log << plumed.cite("White, Dama, and Voth, J. Chem. Theory Comput. 11, 2451 (2015)");
     log << plumed.cite("Marinelli and Faraldo-Gomez, Biophys. J. 108, 2779 (2015)");
   }
-  if (driving_work_argname_.size() > 0) log << plumed.cite(
+  if (driving_restraint_argname_.size() > 0) log << plumed.cite(
      "Moradi and Tajkhorshid, J. Phys. Chem. Lett. 4, 1882 (2013)");
   if (mw_n_ > 1 || walkers_mpi) log << plumed.cite(
      "Raiteri, Laio, Gervasio, Micheletti, and Parrinello, J. Phys. Chem. B 110, 3533 (2006)");
@@ -2015,20 +2020,28 @@ double MetaD::getHeight(const vector<double> &cv) {
     double vbias = getBiasAndDerivatives(cv);
     temperHeight(height, wt_specs_, vbias);
   }
+  if (gat_specs_.is_active) {
+    temperHeight(height, tt_specs_, average_bias_coft_);
+  }
+  if (gat_specs_.is_active) {
+    double max_bias = 0.0;
+    // Missing: calc max bias.
+    temperHeight(height, tt_specs_, max_bias);
+  }
   if (tt_specs_.is_active) {
     double vbarrier = getTransitionBarrierBias();
     temperHeight(height, tt_specs_, vbarrier);
   }
-  if (gat_specs_.is_active) {
-    temperHeight(height, tt_specs_, average_bias_coft_);
-  }
-  if (driving_work_argname_.size() > 0) {
-    height *= exp(-driving_work_arg_->get() / kbt_);
+  if (driving_restraint_argname_.size() > 0) {
+    if (driving_in_equil_arg_->get() != 0.0) {
+      height *= exp(-driving_work_arg_->get() / kbt_);
+    } else {
+      height = 0.0;
+    }
   }
   if (edm_readfilename_.size() > 0) {
     height *= exp(EDMTarget_->getValue(cv) / kbt_);
   }
-  height = min(height, height0_);
   if (benthic_toleration_) {
     if (BenthicHistogram_->getValue(BiasGrid_->getIndex(cv)) < benthic_tol_number_) {
       height = 0.0;
@@ -2039,6 +2052,7 @@ double MetaD::getHeight(const vector<double> &cv) {
       height = 0.0;
     }
   }
+  height = min(height, height0_);
   return height;
 }
 
