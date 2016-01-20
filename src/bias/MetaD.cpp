@@ -1011,12 +1011,12 @@ MetaD::MetaD(const ActionOptions &ao):
     if (gat_specs_.is_active && gat_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (gat_specs_.biasf - 1.0); 
     if (gmt_specs_.is_active && gmt_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (gmt_specs_.biasf - 1.0); 
     if (tt_specs_.is_active && tt_specs_.alpha == greatest_alpha) total_deltaT_inv += 1.0 / (tt_specs_.biasf - 1.0); 
-    if (n_active == 1 && total_deltaT_inv < 1.0) {
+    if (n_active == 1 && total_deltaT_inv < 0.0) {
       error("for stable tempering, the bias factor must be greater than one");
     } else if (total_deltaT_inv < 0.0 && greatest_alpha == least_alpha) {
-      error("for stable tempering, the sum of the inverse Delta T parameters must be greater than or equal to zero!");
+      error("for stable tempering, the sum of the inverse Delta T parameters must be greater than zero!");
     } else if (total_deltaT_inv < 0.0 && greatest_alpha != least_alpha) {
-      error("for stable tempering, the sum of the inverse Delta T parameters for the greatest asymptotic hill decay exponents must be greater than or equal to zero!");
+      error("for stable tempering, the sum of the inverse Delta T parameters for the greatest asymptotic hill decay exponents must be greater than zero!");
     }
   }
   // Transition wells for adaptive domains or transition tempering
