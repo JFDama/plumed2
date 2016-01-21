@@ -2625,8 +2625,12 @@ void MetaD::calculate() {
     double mean_acc = acc / ((double) getStep());
     getPntrToComponent("acc")->set(mean_acc);
   } else if (acceleration && isFirstStep) {
-    acc = initial_boost_ * (double) getStep(); 
-    getPntrToComponent("acc")->set(initial_boost_);
+    if (getStep() == 0) {
+      getPntrToComponent("acc")->set(1.0);
+    } else {
+      acc = initial_boost_ * (double) getStep();
+      getPntrToComponent("acc")->set(initial_boost_);
+    }
   }
   // Set the average bias
   if (calc_average_bias_coft_) {
