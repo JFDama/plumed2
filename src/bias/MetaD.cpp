@@ -290,6 +290,11 @@ class MetaD : public Bias {
   int benthic_histo_stride_;
   vector<double> benthic_histo_bandwidth_;
   Grid *BenthicHistogram_;
+  double initial_boost_;
+  bool stop_condition_boost_is_active_;
+  double stop_condition_boost_;
+  bool stop_condition_max_bias_is_active_;
+  double stop_condition_max_bias_;
   bool use_domains_;
   bool scale_new_hills_;
   bool use_whole_grid_domain_;
@@ -423,6 +428,9 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.add("optional", "BENTHIC_TOLERATION", "use benthic metadynamics with this number of mistakes tolerated in transition states");
   keys.add("optional", "BENTHIC_FILTER_STRIDE", "use benthic metadynamics accumulating filter samples on this timescale in units of simulation time.  Please note you must also specify BENTHIC_TOLERATION");
   keys.add("optional", "BENTHIC_EROSION", "use benthic metadynamics with erosion on this boosted timescale in units of simulation time.  Please note you must also specify BENTHIC_TOLERATION");
+  keys.add("optional", "RESTART_BOOST", "restart the simulation, using this boost factor from the new beginning.");
+  keys.add("optional", "STOP_CONDITION_BOOST", "do not add more hills if the current boost is above this value.");
+  keys.add("optional", "STOP_CONDITION_MAX_BIAS", "do not add more hills if the current maximum bias is above this value.");
   keys.addFlag("USE_DOMAINS", false, "use metabasin metadynamics");
   keys.add("optional", "REGION_RFILE", "use metabasin metadynamics with this file defining areas to flatten");
   keys.addFlag("WHOLE_GRID_DOMAIN", false, "use metabasin metadynamics with the entire grid as the domain to flatten");
@@ -559,6 +567,11 @@ MetaD::MetaD(const ActionOptions &ao):
   last_benthic_erosion_(0.0),
   benthic_histo_stride_(0),
   BenthicHistogram_(NULL),
+  initial_boost_(1.0),
+  stop_condition_boost_is_active_(false),
+  stop_condition_boost_(0.0),
+  stop_condition_max_bias_is_active_(false),
+  stop_condition_max_bias_(0.0),
   use_domains_(false),
   scale_new_hills_(false),
   use_whole_grid_domain_(false),
@@ -720,6 +733,25 @@ MetaD::MetaD(const ActionOptions &ao):
     parse("BENTHIC_EROSION", benthic_erosive_time_);
     if (benthic_erosive_time_ > 0.0) {
       benthic_erosion_ = true;
+    }
+  }
+
+  // Check for a restart boost.
+  parse("RESTART_BOOST", initial_boost_);
+
+  // Check for new hill addition stop conditions.
+  parse("STOP_CONDITION_BOOST", stop_condition_boost_);
+  if (stop_condition_boost_ != 0.0) {
+    stop_condition_boost_is_active_ = true;
+    if (stop_condition_boost_ <= 1.0) {
+      error("boost stop condition value must be greater than one");
+    }
+  }
+  parse("STOP_CONDITION_MAX_BIAS", stop_condition_max_bias_);
+  if (stop_condition_max_bias_ != 0.0) {
+    stop_condition_max_bias_is_active_ = true;
+    if (stop_condition_max_bias_ < 0.0) {
+      error("maximum bias stop condition value must be greater than zero");
     }
   }
 
@@ -963,7 +995,7 @@ MetaD::MetaD(const ActionOptions &ao):
   log.printf("  Gaussian deposition pace %d\n", stride_);
   log.printf("  Gaussian file %s\n", hillsfname.c_str());
   if (wt_specs_.is_active) {
-    logTempering(tt_specs_);
+    logTempering(wt_specs_);
     log.printf("  Hills relaxation time (tau) %f\n", tau);
   }
   // Global average tempered metadynamics options
@@ -1096,6 +1128,17 @@ MetaD::MetaD(const ActionOptions &ao):
     log.printf("\n");
   }
 
+  if (stop_condition_boost_is_active_) {
+    if (acceleration == false) {
+      error(" using a stop condition based on boost requires using ACCELERATION keyword");
+    } else {
+      log.printf("  Boost-based stop condition using boost limit %f \n", stop_condition_boost_);
+    }
+  }
+  if (stop_condition_max_bias_is_active_) {
+    log.printf("  Max-bias-based stop condition using max bias limit %f \n", stop_condition_max_bias_);
+  }
+
   if (doInt_) {
     log.printf("  Upper and Lower limits boundaries for the bias are activated at %f - %f\n", lowI_, uppI_);
   }
@@ -1219,6 +1262,13 @@ MetaD::MetaD(const ActionOptions &ao):
     log.printf("  calculation on the fly of the acceleration factor\n");
     addComponent("acc");
     componentIsNotPeriodic("acc");
+  }
+  if (initial_boost_ != 1.0) {
+    if (acceleration == false) {
+      error(" restarting from a set boost requires using ACCELERATION keyword");
+    } else {
+      log.printf("  Acceleration will initially be set to %g for this restarted simulation.\n", initial_boost_);
+    }
   }
   if (calc_average_bias_coft_) {
     if (kbt_ == 0.0) {
@@ -1359,7 +1409,6 @@ MetaD::MetaD(const ActionOptions &ao):
     BenthicHistogram_ = new Grid(funcl, getArguments(), gmin, gmax, gbin, false, false);
   }
 
-  log.printf("  Entering USE_DOMAINS initialization.\n"); log.flush();
   if (use_domains_) {
     // Initialize domains based on an initial region if requested.
     if (use_whole_grid_domain_ || domainsreadfilename_.length() > 0) {
@@ -1464,7 +1513,6 @@ MetaD::MetaD(const ActionOptions &ao):
       }
     }
   }
-  log.printf("  Exiting USE_DOMAINS initialization.\n"); log.flush();
 
   // Create vector of ifile* for hills reading.
   // Open all files at the beginning and read Gaussians if restarting.
@@ -2015,18 +2063,48 @@ void MetaD::temperHeight(double &height, const TemperingSpecs &t_specs, const do
 }
 
 double MetaD::getHeight(const vector<double> &cv) {
+  if (benthic_toleration_) {
+    if (BenthicHistogram_->getValue(BiasGrid_->getIndex(cv)) < benthic_tol_number_) {
+      return 0.0;
+    }
+  }
+  if (stop_condition_boost_is_active_) {
+    if (getPntrToComponent("acc")->get() >= stop_condition_boost_) {
+      return 0.0;
+    }
+  }
+  if (stop_condition_max_bias_is_active_) {
+    double max_bias = 0.0;
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      max_bias = max(max_bias, BiasGrid_->getValue(i));
+    }
+    if (max_bias >= stop_condition_max_bias_) {
+      return 0.0;
+    }
+  }
+  if (use_domains_ && scale_new_hills_) {
+    if (domain_ids_[BiasGrid_->getIndex(cv)] == 0) {
+      return 0.0;
+    }
+  }
+  // If the hill does not have zero height,
+  // scale it using the appropriate temperings
+  // and other reweighting factors.
   double height = height0_;
   if (wt_specs_.is_active) {
     double vbias = getBiasAndDerivatives(cv);
     temperHeight(height, wt_specs_, vbias);
   }
   if (gat_specs_.is_active) {
-    temperHeight(height, tt_specs_, average_bias_coft_);
+    temperHeight(height, gat_specs_, average_bias_coft_);
   }
-  if (gat_specs_.is_active) {
+  if (gmt_specs_.is_active) {
     double max_bias = 0.0;
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      max_bias = max(max_bias, BiasGrid_->getValue(i));
+    }
     // Missing: calc max bias.
-    temperHeight(height, tt_specs_, max_bias);
+    temperHeight(height, gmt_specs_, max_bias);
   }
   if (tt_specs_.is_active) {
     double vbarrier = getTransitionBarrierBias();
@@ -2042,16 +2120,9 @@ double MetaD::getHeight(const vector<double> &cv) {
   if (edm_readfilename_.size() > 0) {
     height *= exp(EDMTarget_->getValue(cv) / kbt_);
   }
-  if (benthic_toleration_) {
-    if (BenthicHistogram_->getValue(BiasGrid_->getIndex(cv)) < benthic_tol_number_) {
-      height = 0.0;
-    }
-  }
-  if (use_domains_ && scale_new_hills_) {
-    if (domain_ids_[BiasGrid_->getIndex(cv)] == 0) {
-      height = 0.0;
-    }
-  }
+  // Never allow the scaled hill to have a larger
+  // hill height than the initial hill height. This
+  // becomes inactive as tempered hills get small.
   height = min(height, height0_);
   return height;
 }
@@ -2554,7 +2625,8 @@ void MetaD::calculate() {
     double mean_acc = acc / ((double) getStep());
     getPntrToComponent("acc")->set(mean_acc);
   } else if (acceleration && isFirstStep) {
-    getPntrToComponent("acc")->set(1.0);
+    acc = initial_boost_ * (double) getStep(); 
+    getPntrToComponent("acc")->set(initial_boost_);
   }
   // Set the average bias
   if (calc_average_bias_coft_) {
