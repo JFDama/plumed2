@@ -339,6 +339,10 @@ class MetaD : public Bias {
   double acc;
   bool calc_average_bias_coft_;
   double average_bias_coft_;
+  bool calc_max_bias_;
+  double max_bias_;
+  bool calc_transition_bias_;
+  double transition_bias_;
   vector<IFile*> ifiles;
   vector<string> ifilesnames;
   double uppI_;
@@ -413,6 +417,8 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.addOutputComponent("work","default","accumulator for work");
   keys.addOutputComponent("acc", "ACCELERATION", "the metadynamics acceleration factor");
   keys.addOutputComponent("coft", "CALC_AVERAGE_BIAS", "the metadynamics average bias c(t)");
+  keys.addOutputComponent("maxbias", "CALC_MAX_BIAS", "the maximum of the metadynamics V(s, t)");
+  keys.addOutputComponent("transbias", "CALC_TRANSITION_BIAS", "the metadynamics transition bias V*(t)");
   keys.use("ARG");
   keys.add("compulsory", "SIGMA", "the widths of the Gaussian hills");
   keys.add("compulsory", "PACE", "the frequency for hill addition");
@@ -468,6 +474,8 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.addFlag("WALKERS_MPI", false, "Switch on MPI version of multiple walkers - not compatible with other WALKERS_* options");
   keys.addFlag("ACCELERATION", false, "Set to TRUE if you want to compute the metadynamics acceleration factor.");
   keys.addFlag("CALC_AVERAGE_BIAS", false, "Set to TRUE if you want to compute the metadynamics average bias, c(t).");
+  keys.addFlag("CALC_MAX_BIAS", false, "Set to TRUE if you want to compute the maximum of the metadynamics V(s, t)");
+  keys.addFlag("CALC_TRANSITION_BIAS", false, "Set to TRUE if you want to compute a metadynamics transition bias V*(t)");
   keys.use("RESTART");
   keys.use("UPDATE_FROM");
   keys.use("UPDATE_UNTIL");
@@ -599,6 +607,8 @@ MetaD::MetaD(const ActionOptions &ao):
   walkers_mpi(false),
   acceleration(false), acc(0.0),
   calc_average_bias_coft_(false), average_bias_coft_(0.0),
+  calc_max_bias_(false), max_bias_(0.0),
+  calc_transition_bias_(false), transition_bias_(0.0),
   // Interval initialization
   uppI_(-1), lowI_(-1), doInt_(false),
   // Event clock initialization
@@ -682,21 +692,28 @@ MetaD::MetaD(const ActionOptions &ao):
     kbt_ = plumed.getAtoms().getKbT();
   }
 
+  // Manually set to calculate special bias quantities.
+  // These can also be activated automatically by later
+  // options.
+  parseFlag("CALC_AVERAGE_BIAS", calc_average_bias_coft_);
+  parseFlag("CALC_TRANSITION_BIAS", calc_transition_bias_);
+  parseFlag("CALC_MAX_BIAS", calc_max_bias_);
+
   // Set well tempering parameters.
   readTemperingSpecs(wt_specs_);
   if (wt_specs_.is_active && wt_specs_.alpha != 1.0) {
     error("Well tempered is not compatible with choice of ALPHA");
   }
-
   // Set global average tempering parameters.
   readTemperingSpecs(gat_specs_);
-
+  if (gat_specs_.is_active) calc_average_bias_coft_ = true;
   // Set global average tempering parameters.
   readTemperingSpecs(gmt_specs_);
-
+  if (gmt_specs_.is_active) calc_max_bias_ = true;
   // Set transition tempering parameters.
   // Transition wells are read later.
   readTemperingSpecs(tt_specs_);
+  if (tt_specs_.is_active) calc_transition_bias_ = true;
 
   parse("EDM_RFILE", edm_readfilename_);
   if (edm_readfilename_.size() > 0) {
@@ -727,6 +744,7 @@ MetaD::MetaD(const ActionOptions &ao):
   parse("BENTHIC_TOLERATION", benthic_tol_number_);
   if (benthic_tol_number_ > 0.0) {
     benthic_toleration_ = true;
+    acceleration = true;
     // Check for a benthic metadynamics filter time.
     parse("BENTHIC_FILTER_STRIDE", benthic_histo_stride_);
     // Check for a benthic metadynamics erosion time.
@@ -736,13 +754,11 @@ MetaD::MetaD(const ActionOptions &ao):
     }
   }
 
-  // Check for a restart boost.
-  parse("RESTART_BOOST", initial_boost_);
-
   // Check for new hill addition stop conditions.
   parse("STOP_CONDITION_BOOST", stop_condition_boost_);
   if (stop_condition_boost_ != 0.0) {
     stop_condition_boost_is_active_ = true;
+    acceleration = true;
     if (stop_condition_boost_ <= 1.0) {
       error("boost stop condition value must be greater than one");
     }
@@ -750,6 +766,7 @@ MetaD::MetaD(const ActionOptions &ao):
   parse("STOP_CONDITION_MAX_BIAS", stop_condition_max_bias_);
   if (stop_condition_max_bias_ != 0.0) {
     stop_condition_max_bias_is_active_ = true;
+    calc_max_bias_ = true;
     if (stop_condition_max_bias_ < 0.0) {
       error("maximum bias stop condition value must be greater than zero");
     }
@@ -895,8 +912,10 @@ MetaD::MetaD(const ActionOptions &ao):
       parse("ADAPTIVE_DOMAINS_REFERENCE", refstring);
       if (refstring == "minimum") {
         adaptive_domains_reftype_ = kMinRef;
+        calc_max_bias_ = true;
       } else if (refstring == "transition") {
         adaptive_domains_reftype_ = kTransitionRef;
+        calc_transition_bias_ = true;
       } else {
         error("unrecognized adaptive domains reference type for metabasin metadynamics");
       }
@@ -929,7 +948,7 @@ MetaD::MetaD(const ActionOptions &ao):
     parseFlag("PRINT_DOMAINS_SCALING", print_domains_scaling_);
   }
 
-  if (tt_specs_.is_active || (use_adaptive_domains_ && adaptive_domains_reftype_ == kTransitionRef)) {
+  if (calc_transition_bias_) {
     vector<double> tempcoords(getNumberOfArguments());    
     for (unsigned i = 0; ; i++) {
       if (!parseNumberedVector("TRANSITIONWELL", i, tempcoords) ) break;
@@ -973,11 +992,12 @@ MetaD::MetaD(const ActionOptions &ao):
     doInt_ = true;
   }
 
-  // Set special clock options.
-  acceleration = false;
+  // Set special clock boost option.
   parseFlag("ACCELERATION", acceleration);
-  // Set to calculate the average bias.
-  parseFlag("CALC_AVERAGE_BIAS", calc_average_bias_coft_);
+  // Check for a restart boost if acceleration is active.
+  if (acceleration) parse("RESTART_BOOST", initial_boost_);
+
+  // Complete the parsing stage.
   checkRead();
   
   // Log all of what has just been set.
@@ -1013,12 +1033,19 @@ MetaD::MetaD(const ActionOptions &ao):
     if (!grid_) {
       error(" global maximum tempering requires a grid for the bias");
     }
+    // Check that the appropriate bias quantities are calculated.
+    // (Should never trip, given that the flag is automatically set.)
+    if (!calc_max_bias_) {
+      error(" global maximum tempering requires calculation of the maximum bias");
+    }
   }
   // Transition tempered metadynamics options
   if (tt_specs_.is_active) {
     logTempering(tt_specs_);
-    if (transitionwells_.size() == 0) {
-      error("transition tempering requires definition of at least one transition well");
+    // Check that the appropriate bias quantities are calculated.
+    // (Should never trip, given that the flag is automatically set.)
+    if (!calc_transition_bias_) {
+      error(" transition tempering requires calculation of a transition bias");
     }
   }
   // Overall tempering sanity check (this gets tricky when multiple are active).
@@ -1280,6 +1307,25 @@ MetaD::MetaD(const ActionOptions &ao):
     log.printf("  calculation on the fly of the average bias c(t)\n");
     addComponent("coft");
     componentIsNotPeriodic("coft");
+  }
+  if (calc_transition_bias_) {
+    if (!grid_) {
+      error("Calculating the transition bias on the fly works only with a grid");
+    }
+    if (transitionwells_.size() == 0) {
+      error("Calculating the transition bias on the fly requires definition of at least one transition well");
+    }
+    log.printf("  calculation on the fly of the transition bias V*(t)\n");
+    addComponent("transbias");
+    componentIsNotPeriodic("transbias");
+  }
+  if (calc_max_bias_) {
+    if (!grid_) {
+      error("Calculating the maximum bias on the fly works only with a grid");
+    }
+    log.printf("  calculation on the fly of the maximum bias max(V(s,t)) \n");
+    addComponent("maxbias");
+    componentIsNotPeriodic("maxbias");
   }
   
   // Perform initializations based on the options just set and logged.
@@ -2074,11 +2120,7 @@ double MetaD::getHeight(const vector<double> &cv) {
     }
   }
   if (stop_condition_max_bias_is_active_) {
-    double max_bias = 0.0;
-    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-      max_bias = max(max_bias, BiasGrid_->getValue(i));
-    }
-    if (max_bias >= stop_condition_max_bias_) {
+    if (max_bias_ >= stop_condition_max_bias_) {
       return 0.0;
     }
   }
@@ -2099,15 +2141,11 @@ double MetaD::getHeight(const vector<double> &cv) {
     temperHeight(height, gat_specs_, average_bias_coft_);
   }
   if (gmt_specs_.is_active) {
-    double max_bias = 0.0;
-    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-      max_bias = max(max_bias, BiasGrid_->getValue(i));
-    }
     // Missing: calc max bias.
-    temperHeight(height, gmt_specs_, max_bias);
+    temperHeight(height, gmt_specs_, max_bias_);
   }
   if (tt_specs_.is_active) {
-    double vbarrier = getTransitionBarrierBias();
+    double vbarrier = transition_bias_;
     temperHeight(height, tt_specs_, vbarrier);
   }
   if (driving_restraint_argname_.size() > 0) {
@@ -2452,15 +2490,11 @@ bool MetaD::shouldAdaptDomainsNow() {
     // the offset somewhere.
     double trigger_bias = 0.0;
     if (adaptive_domains_reftype_ == kMinRef) {
-      double max_bias = 0.0;
-      for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-        max_bias = max(max_bias, BiasGrid_->getValue(i));
-      }
-      trigger_bias = max_bias + domain_implicit_bias_level_;
+      trigger_bias = max_bias_ + domain_implicit_bias_level_;
     // For the transition-referenced adaptive domains, delay until
     // the transition barrier bias is above the offset.
     } else if (adaptive_domains_reftype_ == kTransitionRef) {
-      trigger_bias = getTransitionBarrierBias();
+      trigger_bias = transition_bias_;
     }
     // Rescale the bias to match a free energy estimate as needed.
     if (wt_specs_.is_active) {
@@ -2635,6 +2669,12 @@ void MetaD::calculate() {
   // Set the average bias
   if (calc_average_bias_coft_) {
     getPntrToComponent("coft")->set(average_bias_coft_);  
+  }
+  if (calc_transition_bias_) {
+    getPntrToComponent("transbias")->set(transition_bias_);  
+  } 
+  if (calc_max_bias_) {
+    getPntrToComponent("maxbias")->set(max_bias_);  
   } 
   getPntrToComponent("work")->set(work_);
 
@@ -2801,7 +2841,8 @@ void MetaD::update() {
       }
     }
   }
-  // Calculate the new average bias after any bias update.
+  // Calculate new special bias quantities after any bias update.
+  // First calculate the average bias if desired.
   // This does not follow the Tiwary and Parrinello JPCB paper.
   if (calc_average_bias_coft_ && (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0))) {
     // Calc sums rather than integrals because the normalization
@@ -2828,6 +2869,21 @@ void MetaD::update() {
     }
     average_bias_coft_ = kbt_ * ( std::log(exp_free_energy_sum) - std::log(exp_biased_free_energy_sum));
     getPntrToComponent("coft")->set(average_bias_coft_);
+  }
+  // Next calculate the transition bias if desired.
+  if (calc_transition_bias_ && (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0))) {
+    transition_bias_ = getTransitionBarrierBias();
+    getPntrToComponent("transbias")->set(transition_bias_);
+  }
+  // Next calculate the maximum bias if desired.
+  if (calc_max_bias_ && (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0))) {
+    // Calculate the new 
+    double temp_max_bias = 0.0;
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      temp_max_bias = max(temp_max_bias, BiasGrid_->getValue(i));
+    }
+    max_bias_ = temp_max_bias;
+    getPntrToComponent("maxbias")->set(max_bias_);
   }
 }
 
