@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2013-2015 The plumed team
+   Copyright (c) 2013-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -22,6 +22,7 @@
 #include "ReferenceConfiguration.h"
 #include "ReferenceArguments.h"
 #include "ReferenceAtoms.h"
+#include "Direction.h"
 #include "core/Value.h"
 #include "tools/OFile.h"
 #include "tools/PDB.h"
@@ -137,10 +138,6 @@ void ReferenceConfiguration::checkRead(){
   }
 }
 
-bool ReferenceConfiguration::isDirection() const {
-  return ( name=="DIRECTION" );
-}
-
 double ReferenceConfiguration::calculate( const std::vector<Vector>& pos, const Pbc& pbc, const std::vector<Value*>& vals, 
                                           ReferenceValuePack& myder, const bool& squared ) const {
   // clearDerivatives();
@@ -156,18 +153,62 @@ double ReferenceConfiguration::calculate( const std::vector<Vector>& pos, const 
 //   virialWasSet=ref->virialWasSet; virial=ref->virial;
 // }
 
-void ReferenceConfiguration::print( OFile& ofile, const double& time, const double& weight, const double& old_norm ){
+void ReferenceConfiguration::print( OFile& ofile, const double& time, const double& weight, const double& lunits, const double& old_norm ){
   ofile.printf("REMARK TIME=%f LOG_WEIGHT=%f OLD_NORM=%f\n",time, weight, old_norm );
-  print( ofile, "%f" );  // HARD CODED FORMAT HERE AS THIS IS FOR CHECKPOINT FILE
+  print( ofile, "%f", lunits );  // HARD CODED FORMAT HERE AS THIS IS FOR CHECKPOINT FILE
 }
 
-void ReferenceConfiguration::print( OFile& ofile, const std::string& fmt ){
+void ReferenceConfiguration::print( OFile& ofile, const std::string& fmt, const double& lunits ){
+  ofile.printf("REMARK TYPE=%s\n",getName().c_str() );
   ReferenceArguments* args=dynamic_cast<ReferenceArguments*>(this);
   if(args) args->printArguments( ofile, fmt );
   ReferenceAtoms* atoms=dynamic_cast<ReferenceAtoms*>(this);
-  if(atoms) atoms->printAtoms( ofile );
+  if(atoms) atoms->printAtoms( ofile, lunits );
   ofile.printf("END\n");
 }
+
+void ReferenceConfiguration::displaceReferenceConfiguration( const double& weight, Direction& dir ){
+  ReferenceArguments* args=dynamic_cast<ReferenceArguments*>(this);
+  if( args ) args->displaceReferenceArguments( weight, dir.getReferenceArguments() );
+  ReferenceAtoms* atoms=dynamic_cast<ReferenceAtoms*>(this);
+  if( atoms ) atoms->displaceReferenceAtoms( weight, dir.getReferencePositions() );
+}
+
+void ReferenceConfiguration::extractDisplacementVector( const std::vector<Vector>& pos, const std::vector<Value*>& vals, 
+                                                        const std::vector<double>& arg, const bool & anflag, const bool& nflag, 
+                                                        Direction& mydir ) const {
+  const ReferenceAtoms* atoms=dynamic_cast<const ReferenceAtoms*>( this );
+  if( atoms ) atoms->extractAtomicDisplacement( pos, anflag, mydir.reference_atoms );
+  const ReferenceArguments* args=dynamic_cast<const ReferenceArguments*>( this );
+  if( args ) args->extractArgumentDisplacement( vals, arg, mydir.reference_args );
+
+  // Normalize direction if required
+  if( nflag ){
+      // Calculate length of vector
+      double tmp, norm=0;
+      for(unsigned i=0;i<mydir.getReferencePositions().size();++i){
+          for(unsigned k=0;k<3;++k){ tmp=mydir.getReferencePositions()[i][k]; norm+=tmp*tmp; }
+      }
+      for(unsigned i=0;i<mydir.getReferenceArguments().size();++i){ tmp=mydir.getReferenceArguments()[i]; norm+=tmp*tmp; }
+      norm = sqrt( norm );
+      // And normalize
+      for(unsigned i=0;i<mydir.getReferencePositions().size();++i){ 
+          for(unsigned k=0;k<3;++k){ mydir.reference_atoms[i][k] /=norm; }
+      }
+      for(unsigned i=0;i<mydir.getReferenceArguments().size();++i){ mydir.reference_args[i] /= norm; }
+  }
+}
+
+double ReferenceConfiguration::projectDisplacementOnVector( const Direction& mydir, const std::vector<Vector>& pos,
+                                                            const std::vector<Value*>& vals, const std::vector<double>& arg, 
+                                                            ReferenceValuePack& mypack ) const {
+  double proj=0;
+  const ReferenceAtoms* atoms=dynamic_cast<const ReferenceAtoms*>( this );
+  if( atoms ) proj += atoms->projectAtomicDisplacementOnVector( mydir.getReferencePositions(), pos, mypack );
+  const ReferenceArguments* args=dynamic_cast<const ReferenceArguments*>( this );
+  if( args ) proj += args->projectArgDisplacementOnVector( mydir.getReferenceArguments(), vals, arg, mypack );
+  return proj;
+} 
 
 double distance( const Pbc& pbc, const std::vector<Value*> & vals, ReferenceConfiguration* ref1, ReferenceConfiguration* ref2, const bool& squared ){
   unsigned nder;

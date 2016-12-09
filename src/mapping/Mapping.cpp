@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2013-2015 The plumed team
+   Copyright (c) 2013-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -106,9 +106,9 @@ ActionWithVessel(ao)
   requestAtoms( atoms ); std::vector<Value*> req_args;
   interpretArgumentList( args, req_args ); requestArguments( req_args );
   // Duplicate all frames (duplicates are used by sketch-map)
-  mymap->duplicateFrameList(); 
+  // mymap->duplicateFrameList(); 
   // fframes.resize( 2*nfram, 0.0 ); dfframes.resize( 2*nfram, 0.0 );
-  plumed_assert( !mymap->mappingNeedsSetup() );
+  // plumed_assert( !mymap->mappingNeedsSetup() );
   // Resize all derivative arrays
   // mymap->setNumberOfAtomsAndArguments( atoms.size(), args.size() );
   // Resize forces array
@@ -136,20 +136,28 @@ void Mapping::prepare(){
       requestAtoms( atoms ); std::vector<Value*> req_args; 
       interpretArgumentList( args, req_args ); requestArguments( req_args );
       // Duplicate all frames (duplicates are used by sketch-map)
-      mymap->duplicateFrameList();
+      //mymap->duplicateFrameList();
       // Get the number of frames in the path
-      unsigned nfram=getNumberOfReferencePoints();
+      // unsigned nfram=getNumberOfReferencePoints();
       // fframes.resize( 2*nfram, 0.0 ); dfframes.resize( 2*nfram, 0.0 ); 
-      plumed_assert( !mymap->mappingNeedsSetup() );
+      // plumed_assert( !mymap->mappingNeedsSetup() );
       // Resize all derivative arrays
       // mymap->setNumberOfAtomsAndArguments( atoms.size(), args.size() );
       // Resize forces array
-      forcesToApply.resize( 3*getNumberOfAtoms() + 9 + getNumberOfArguments() );
+      if( getNumberOfAtoms()>0 ){
+         forcesToApply.resize( 3*getNumberOfAtoms() + 9 + getNumberOfArguments() );
+      } else {
+         forcesToApply.resize( getNumberOfArguments() );
+      }
   }
 }
 
 unsigned Mapping::getPropertyIndex( const std::string& name ) const {
   return mymap->getPropertyIndex( name );
+}
+
+void Mapping::setPropertyValue( const unsigned& iframe, const unsigned& jprop, const double& property ){
+  mymap->setProjectionCoordinate( iframe, jprop, property );
 }
 
 double Mapping::getLambda(){

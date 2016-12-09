@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2013-2015 The plumed team
+   Copyright (c) 2013-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -37,6 +37,7 @@ class Value;
 class Pbc;
 class OFile;
 class PDB;
+class Direction;
 
 class ReferenceConfigurationOptions {
 friend class ReferenceConfiguration;
@@ -144,27 +145,30 @@ public:
 /// Set the reference structure (perhaps should also pass the pbc and align and displace )
   void setReferenceConfig( const std::vector<Vector>& pos, const std::vector<double>& arg, const std::vector<double>& metric );
 /// Print a pdb file containing the reference configuration
-  void print( OFile& ofile, const double& time, const double& weight, const double& old_norm );
-  void print( OFile& ofile, const std::string& fmt );
+  void print( OFile& ofile, const double& time, const double& weight, const double& lunits, const double& old_norm );
+  void print( OFile& ofile, const std::string& fmt, const double& lunits );
 /// Get one of the referene arguments
   virtual double getReferenceArgument( const unsigned& i ) const { plumed_error(); return 0.0; }
 /// These are overwritten in ReferenceArguments and ReferenceAtoms but are required here 
 /// to make PLMD::distance work
   virtual const std::vector<Vector>& getReferencePositions() const ; 
-  virtual const std::vector<double>& getReferenceArguments(); 
+  virtual const std::vector<double>& getReferenceArguments() const ; 
   virtual const std::vector<double>& getReferenceMetric();
 /// These are overwritten in ReferenceArguments and ReferenceAtoms to make frame copying work
   virtual const std::vector<AtomNumber>& getAbsoluteIndexes();
   virtual const std::vector<std::string>& getArgumentNames();
+/// Extract a Direction giving you the displacement from some position
+  void extractDisplacementVector( const std::vector<Vector>& pos, const std::vector<Value*>& vals,
+                                  const std::vector<double>& arg, const bool& anflag, const bool& nflag, 
+                                  Direction& mydir ) const ;
 /// Stuff for pca
   virtual bool pcaIsEnabledForThisReference(){ return false; }
-  virtual double projectAtomicDisplacementOnVector( const unsigned& i, const Matrix<Vector>& eigv, const std::vector<Vector>& pos, ReferenceValuePack& mypack ) const {
-     plumed_error(); return 1; 
-  }
-/// Stuff for sanity checks on distance
-  bool isDirection() const ;
+  double projectDisplacementOnVector( const Direction& mydir, const std::vector<Vector>& pos, const std::vector<Value*>& vals, 
+                                      const std::vector<double>& arg, ReferenceValuePack& mypack ) const ;
 /// Stuff to setup pca
   virtual void setupPCAStorage( ReferenceValuePack& mypack ){ plumed_error(); }
+/// Move the reference configuration by an ammount specified using a Direction
+  void displaceReferenceConfiguration( const double& weight, Direction& dir );
 };
 
 // inline
@@ -209,7 +213,7 @@ const std::vector<Vector>& ReferenceConfiguration::getReferencePositions() const
 }
 
 inline
-const std::vector<double>& ReferenceConfiguration::getReferenceArguments(){
+const std::vector<double>& ReferenceConfiguration::getReferenceArguments() const {
   return fake_refargs;
 }
 

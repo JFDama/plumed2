@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2012-2014 The plumed team
+   Copyright (c) 2012-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -30,7 +30,7 @@ class ActionWithArguments;
 
 class FlexibleBin{
 	private:
-		const int type;
+		int type;
 		// this contains all the infos about the CVs including periodicity
 		ActionWithArguments *paction;
 		double sigma;	
@@ -46,10 +46,14 @@ class FlexibleBin{
 	public:
 		/// a constructor that takes the pointer of the action that contains it
 		FlexibleBin(int type,ActionWithArguments *paction, double const &d, std::vector<double> &sigmamin, std::vector<double> &sigmamax );
+                /// a constructor for 1D FlexBin (for PBMETAD)
+		FlexibleBin(int type, ActionWithArguments *paction, unsigned iarg, double const &d, std::vector<double> &sigmamin, std::vector<double> &sigmamax);
 		/// update the average (always for diffusion) or calculate the geom covariance (  only when do_when_zero is zero)
-		void update(bool nowAddAHill );
+		void update(bool nowAddAHill);
+		void update(bool nowAddAHill, unsigned iarg);
 		std::vector<double> getMatrix() const;
 		std::vector<double> getInverseMatrix() const;
+		std::vector<double> getInverseMatrix(unsigned iarg) const;
 		enum AdaptiveHillsType { none, diffusion, geometry }; 
 };
 

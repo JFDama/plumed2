@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2011-2015 The plumed team
+   Copyright (c) 2011-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -209,7 +209,6 @@ verse(getNumberOfArguments())
     log.printf("\n");
   };
 
-  addComponent("bias"); componentIsNotPeriodic("bias");
   addComponent("force2"); componentIsNotPeriodic("force2");
 
   // add the centers of the restraint as additional components that can be retrieved (useful for debug)
@@ -311,7 +310,7 @@ void MovingRestraint::calculate(){
   oldaa=aa;
   oldk=kk;
   olddpotdk=dpotdk;
-  getPntrToComponent("bias")->set(ene);
+  setBias(ene);
   getPntrToComponent("force2")->set(totf2);
   if (curr_restraint_step < step.size() && equilibration[curr_restraint_step]) {
     if ((!loop_steps_ && now == step[curr_restraint_step]-1) || 

@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2011-2015 The plumed team
+   Copyright (c) 2011-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -77,12 +77,14 @@ class Value;
 class IFile;
 class OFile;
 class KernelFunctions;
+class Communicator;
 
 /// \ingroup TOOLBOX
 class Grid {
  public:
   typedef size_t index_t;
  private:
+  double contour_location;
   std::vector<double> grid_;
   std::vector< std::vector<double> > der_;
 
@@ -182,6 +184,10 @@ class Grid {
   virtual double getValueAndDerivatives(index_t index, std::vector<double> &der) const ;
   virtual double getValueAndDerivatives(const std::vector<unsigned> &indices, std::vector<double> &der) const;
   virtual double getValueAndDerivatives(const std::vector<double> &x, std::vector<double> &der) const;
+  /// Get the difference from the contour
+  double getDifferenceFromContour(const std::vector<double> & x, std::vector<double>& der) const ; 
+  /// Find a set of points on a contour in the function
+  void findSetOfPointsOnContour(const double& target, const std::vector<bool>& nosearch, unsigned& npoints, std::vector<std::vector<double> >& points );
 
   /// set grid value
   virtual void setValue(index_t index, double value);
@@ -217,7 +223,7 @@ class Grid {
   /// dump grid on file
   virtual void writeToFile(OFile&);
   /// dump grid to gaussian cube file
-  void writeCubeFile(OFile&);
+  void writeCubeFile(OFile&, const double& lunit);
 
   virtual ~Grid() {}
 
@@ -229,6 +235,10 @@ class Grid {
   void setOutputFmt(std::string ss) {
     fmt_ = ss;
   }
+  /// Integrate the function calculated on the grid
+  double integrate( std::vector<unsigned>& npoints );
+  ///
+  void mpiSumValuesAndDerivatives( Communicator& comm );
 };
 
 class SparseGrid : public Grid {

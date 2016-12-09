@@ -1,8 +1,8 @@
 /* +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-   Copyright (c) 2011-2015 The plumed team
+   Copyright (c) 2011-2016 The plumed team
    (see the PEOPLE file at the root of the distribution for a list of names)
 
-   See http://www.plumed-code.org for more information.
+   See http://www.plumed.org for more information.
 
    This file is part of plumed, version 2.
 
@@ -19,12 +19,6 @@
    You should have received a copy of the GNU Lesser General Public License
    along with plumed.  If not, see <http://www.gnu.org/licenses/>.
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
-#include <vector>
-#include <cmath>
-#include <iostream>
-#include <sstream>
-#include <cstdio>
-#include <cfloat>
 
 #include "Grid.h"
 #include "Tools.h"
@@ -32,6 +26,15 @@
 #include "File.h"
 #include "Exception.h"
 #include "KernelFunctions.h"
+#include "RootFindingBase.h"
+#include "Communicator.h"
+
+#include <vector>
+#include <cmath>
+#include <iostream>
+#include <sstream>
+#include <cstdio>
+#include <cfloat>
 
 using namespace std;
 namespace PLMD {
@@ -74,7 +77,7 @@ Grid::Grid(const std::string &funcl, const std::vector<string> &names, const std
 void Grid::Init(const std::string &funcl, const std::vector<std::string> &names, const vector<std::string> &gmin,
                 const std::vector<std::string> &gmax, const std::vector<unsigned> &nbin, bool dospline, bool usederiv, bool doclear,
                 const std::vector<bool> &isperiodic, const std::vector<std::string> &pmin, const std::vector<std::string> &pmax) {
-  fmt_ = "%14.9f";
+  contour_location = 0.0; fmt_="%14.9f"; 
 // various checks
   plumed_massert(names.size() == gmin.size(), "grid dimensions in input do not match number of arguments");
   plumed_massert(names.size() == nbin.size(), "grid dimensions in input do not match number of arguments");
@@ -868,14 +871,16 @@ void Grid::writeToFile(OFile &ofile) {
   }
 }
 
-void Grid::writeCubeFile(OFile& ofile){
+void Grid::writeCubeFile(OFile& ofile, const double& lunit){
   plumed_assert( dimension_==3 );
   ofile.printf("PLUMED CUBE FILE\n");
   ofile.printf("OUTER LOOP: X, MIDDLE LOOP: Y, INNER LOOP: Z\n");
-  ofile.printf("%d %f %f %f\n",0,0.0,0.0,0.0); // Number of atoms followed by position of origin
-  ofile.printf("%u %f %f %f\n",nbin_[0],dx_[0],0.0,0.0);  // Number of bins in each direction followed by 
-  ofile.printf("%u %f %f %f\n",nbin_[1],0.0,dx_[1],0.0);  // shape of voxel
-  ofile.printf("%u %f %f %f\n",nbin_[2],0.0,0.0,dx_[2]);
+  // Number of atoms followed by position of origin (origin set so that center of grid is in center of cell)
+  ofile.printf("%d %f %f %f\n",1,-0.5*lunit*(max_[0]-min_[0]),-0.5*lunit*(max_[1]-min_[1]),-0.5*lunit*(max_[2]-min_[2])); 
+  ofile.printf("%u %f %f %f\n",nbin_[0],lunit*dx_[0],0.0,0.0);  // Number of bins in each direction followed by 
+  ofile.printf("%u %f %f %f\n",nbin_[1],0.0,lunit*dx_[1],0.0);  // shape of voxel
+  ofile.printf("%u %f %f %f\n",nbin_[2],0.0,0.0,lunit*dx_[2]);
+  ofile.printf("%d %f %f %f\n",1,0.0,0.0,0.0); // Fake atom otherwise VMD doesn't work
   std::vector<unsigned> pp(3);
   for(pp[0]=0;pp[0]<nbin_[0];++pp[0]){
       for(pp[1]=0;pp[1]<nbin_[1];++pp[1]){
@@ -996,6 +1001,53 @@ void SparseGrid::clear() {
 
 Grid::index_t SparseGrid::getSize() const {
   return map_.size();
+}
+
+double Grid::getDifferenceFromContour( const std::vector<double>& x, std::vector<double>& der ) const {
+ return getValueAndDerivatives( x, der ) - contour_location; 
+}
+
+void Grid::findSetOfPointsOnContour(const double& target, const std::vector<bool>& nosearch,
+                                    unsigned& npoints, std::vector<std::vector<double> >& points ){
+ // Set contour location for function
+ contour_location=target;
+ // Resize points to maximum possible value 
+ points.resize( dimension_*maxsize_ );
+
+ // Two points for search
+ std::vector<unsigned> ind(dimension_);
+ std::vector<double> direction( dimension_, 0 );
+
+ // Run over whole grid
+ npoints=0; RootFindingBase<Grid> mymin( this );
+ for(unsigned i=0;i<maxsize_;++i){
+     for(unsigned j=0;j<dimension_;++j) ind[j]=getIndices(i)[j]; 
+
+     // Get the value of a point on the grid    
+     double val1=getValue(i) - target;
+
+     // Now search for contour in each direction
+     bool edge=false;
+     for(unsigned j=0;j<dimension_;++j){
+         if( nosearch[j] ) continue ; 
+         // Make sure we don't search at the edge of the grid
+         if( !pbc_[j] && (ind[j]+1)==nbin_[j] ) continue;
+         else if( (ind[j]+1)==nbin_[j] ){ edge=true; ind[j]=0; } 
+         else ind[j]+=1;  
+         double val2=getValue(ind) - target;
+         if( val1*val2<0 ){
+             // Use initial point location as first guess for search
+             points[npoints].resize(dimension_); for(unsigned k=0;k<dimension_;++k) points[npoints][k]=getPoint(i)[k];
+             // Setup direction vector
+             direction[j]=0.999999999*dx_[j];
+             // And do proper search for contour point
+             mymin.linesearch( direction, points[npoints], &Grid::getDifferenceFromContour );
+             direction[j]=0.0; npoints++;
+         } 
+         if( pbc_[j] && edge ){ edge=false; ind[j]=nbin_[j]-1; }
+         else ind[j]-=1; 
+     }  
+ } 
 }
 
 double SparseGrid::getValue(index_t index)const {
@@ -1200,4 +1252,40 @@ Grid Grid::project(const std::vector<std::string> & proj , WeightBase *ptr2obj )
 
      return smallgrid; 
 }
+
+double Grid::integrate( std::vector<unsigned>& npoints ){
+  plumed_dbg_assert( npoints.size()==dimension_ ); plumed_assert( dospline_ );
+
+  unsigned ntotgrid=1; double box_vol=1.0;
+  std::vector<double> ispacing( npoints.size() );
+  for(unsigned j=0;j<dimension_;++j){
+      if( !pbc_[j] ){
+         ispacing[j] = ( max_[j] - dx_[j] - min_[j] ) / static_cast<double>( npoints[j] );
+         npoints[j]+=1;
+      } else {
+         ispacing[j] = ( max_[j] - min_[j] ) / static_cast<double>( npoints[j] );
+      }
+      ntotgrid*=npoints[j]; box_vol*=ispacing[j];
+  }
+
+  std::vector<double> vals( dimension_ );
+  std::vector<unsigned> t_index( dimension_ ); double integral=0.0;
+  for(unsigned i=0;i<ntotgrid;++i){
+      t_index[0]=(i%npoints[0]);
+      unsigned kk=i;
+      for(unsigned j=1;j<dimension_-1;++j){ kk=(kk-t_index[j-1])/npoints[i-1]; t_index[j]=(kk%npoints[i]); }
+      if( dimension_>=2 ) t_index[dimension_-1]=((kk-t_index[dimension_-1])/npoints[dimension_-2]);
+
+      for(unsigned j=0;j<dimension_;++j) vals[j]=min_[j] + t_index[j]*ispacing[j];
+
+      integral += getValue( vals );
+  }
+
+  return box_vol*integral;
+}
+
+void Grid::mpiSumValuesAndDerivatives( Communicator& comm ){
+  comm.Sum( grid_ ); for(unsigned i=0;i<der_.size();++i) comm.Sum( der_[i] );
+}
+
 }
