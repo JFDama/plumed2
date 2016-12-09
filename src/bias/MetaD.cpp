@@ -1428,7 +1428,6 @@ MetaD::MetaD(const ActionOptions &ao):
     }
   }
   
-  addComponent("bias"); componentIsNotPeriodic("bias");
   if( rewf_grid_.size()>0 ){ 
     addComponent("rbias"); componentIsNotPeriodic("rbias");
     addComponent("rct"); componentIsNotPeriodic("rct"); 
