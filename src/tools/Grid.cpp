@@ -660,7 +660,7 @@ double Grid::findMaximalPathMinimum(const std::vector<double> &source, const std
   index_t source_idx = getIndex(source);
   index_t sink_idx = getIndex(sink);
   // Path cost
-  double maximal_minimum;
+  double maximal_minimum = 0;
   // In one dimension, path searching is very easy--either go one way if it's not periodic,
   // or go both ways if it is periodic. There's no reason to pay the cost of Dijkstra.
   if (dimension_ == 1) {
