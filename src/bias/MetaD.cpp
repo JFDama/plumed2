@@ -560,6 +560,12 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.add("optional", "GRID_MAX", "the upper bounds for the grid");
   keys.add("optional", "GRID_BIN", "the number of bins for the grid");
   keys.add("optional", "GRID_SPACING", "the approximate grid spacing (to be used as an alternative or together with GRID_BIN)");
+  keys.add("optional","REWEIGHTING_NGRID","calculate the c(t) reweighting factor and use that to obtain the normalized bias [rbias=bias-c(t)]."
+                                          "Here you should specify the number of grid points required in each dimension."
+                                          "The number of grid points should be equal or larger to the number of grid points given in GRID_BIN." 
+                                          "This method is not compatible with metadynamics not on a grid.");
+  keys.add("optional","REWEIGHTING_NHILLS","how many Gaussian hills should be deposited between calculating the c(t) reweighting factor."
+                                           "The default is to do this every 50 hills.");
   keys.addFlag("GRID_SPARSE", false, "use a sparse grid to store hills");
   keys.addFlag("GRID_NOSPLINE", false, "don't use spline interpolation with grids");
   keys.add("optional", "GRID_WSTRIDE", "write the grid to a file every N steps");

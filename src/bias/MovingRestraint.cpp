@@ -146,7 +146,6 @@ void MovingRestraint::registerKeywords( Keywords& keys ){
                               "If no EQUILIBRATIONx is specified for STEPx then the work will be accumulated as normal through STEPx+1.");
   keys.reset_style("EQUILIBRATION","optional");
   componentsAreNotOptional(keys);
-  keys.addOutputComponent("bias","default","the instantaneous value of the bias potential");
   keys.addOutputComponent("work","default","the total work performed changing this restraint");
   keys.addOutputComponent("force2","default","the instantaneous value of the squared force due to this bias potential");
   keys.addOutputComponent("in_equil","default","whether (1.0) or not (0.0) the current step is an equilibration.");
