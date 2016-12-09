@@ -481,7 +481,7 @@ class MetaD : public Bias {
 
   void   dumpBias();
   void   dumpGrid(Grid *, OFile &);
-s
+
  public:
   explicit MetaD(const ActionOptions &);
   ~MetaD();
