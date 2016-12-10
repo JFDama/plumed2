@@ -850,7 +850,7 @@ MetaD::MetaD(const ActionOptions &ao):
     interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".work"), driving_work_arg_wrapper);
     driving_work_arg_ = driving_work_arg_wrapper[0];
     vector<Value *> driving_in_equil_arg_wrapper;
-    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".in_equil"), driving_in_equil_arg_wrapper);
+    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".inequil"), driving_in_equil_arg_wrapper);
     driving_in_equil_arg_ = driving_in_equil_arg_wrapper[0];
     // Add a dependency on the corresponding ActionWithValue.
     ActionWithValue* action = plumed.getActionSet().selectWithLabel<ActionWithValue*>(driving_restraint_argname_);
@@ -1096,17 +1096,18 @@ MetaD::MetaD(const ActionOptions &ao):
     error("RESTART_FROM_GRID requires an input GRID_RFILE");
   }
 
-  if(grid_){ 
-    parseVector("REWEIGHTING_NGRID",rewf_grid_); 
-    if(rewf_grid_.size()>0 && rewf_grid_.size()!=getNumberOfArguments()){
+  if (grid_) { 
+    parseVector("REWEIGHTING_NGRID", rewf_grid_); 
+    if (rewf_grid_.size() > 0 && rewf_grid_.size() != getNumberOfArguments()) {
       error("size mismatch for REWEIGHTING_NGRID keyword");
-    } else if(rewf_grid_.size()==getNumberOfArguments()){
-      for(unsigned j=0;j<getNumberOfArguments();++j){
-        if( !getPntrToArgument(j)->isPeriodic() ) rewf_grid_[j] += 1; 
+    } else if(rewf_grid_.size() == getNumberOfArguments()){
+      for (unsigned j = 0; j < getNumberOfArguments(); ++j){
+        if( !getPntrToArgument(j)->isPeriodic()) rewf_grid_[j] += 1; 
       }
     }
-    if(adaptive_==FlexibleBin::diffusion || adaptive_==FlexibleBin::geometry) warning("reweighting has not been proven to work with adaptive Gaussians");
-    rewf_ustride_=50; parse("REWEIGHTING_NHILLS",rewf_ustride_);
+    if(adaptive_ == FlexibleBin::diffusion || adaptive_ == FlexibleBin::geometry) warning("reweighting has not been proven to work with adaptive Gaussians");
+    rewf_ustride_ = 50;
+    parse("REWEIGHTING_NHILLS", rewf_ustride_);
   }
 
   // Set multiple walkers parameters.
