@@ -531,6 +531,7 @@ void MetaD::registerKeywords(Keywords &keys) {
     registerTemperingKeywords(tempering_names[i][0], tempering_names[i][1], keys);
   }
   keys.add("numbered", "TRANSITIONWELL", "This keyword appears multiple times as TRANSITIONWELLx with x=0,1,2,...,n. Each specifies the coordinates for one well in transition-tempered metadynamics. At least one must be provided.");
+  keys.add("optional","TARGET","target to a predefined distribution");
   keys.add("optional", "EDM_RFILE", "use experiment-directed metadynamics with this file defining the desired target free energy");
   keys.add("optional", "DRIVING_RESTRAINT", "use driven metadynamics with this argument defining the steering action acting on the system (should be a MOVINGRESTRAINT)");
   keys.add("optional", "BENTHIC_TOLERATION", "use benthic metadynamics with this number of mistakes tolerated in transition states");
