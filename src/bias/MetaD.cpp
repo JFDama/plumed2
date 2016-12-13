@@ -1497,18 +1497,18 @@ MetaD::MetaD(const ActionOptions &ao):
   
   // Initialize and check grid.
   if (grid_) {
-    // check for adaptive and sigma_min
-    if(sigma0min_.size()==0&&adaptive_!=FlexibleBin::none) error("When using Adaptive Gaussians on a grid SIGMA_MIN must be specified");
     // check for mesh and sigma size
     for (unsigned i = 0; i < getNumberOfArguments(); i++) {
       double a, b;
       Tools::convert(gmin[i], a);
       Tools::convert(gmax[i], b);
       double mesh = (b - a) / ((double)gbin[i]);
-      if (mesh > 0.5 * sigma0_[i]) {
-        log << "  WARNING: Using a METAD with a Grid Spacing larger than half of the Gaussians width can produce artifacts\n";
-      } else if(mesh > 0.5 * sigma0min_[i] || sigma0min_[i] < 0.) {
-        log<<"  WARNING: to use a METAD with a GRID and ADAPTIVE you need to set a Grid Spacing larger than half of the Gaussians \n";
+      if (adaptive_ == FlexibleBin::none) {
+        if (mesh > 0.5 * sigma0_[i]) {
+          log << "  WARNING: Using a METAD with a Grid Spacing larger than half of the Gaussians width can produce artifacts\n";
+        } else if(mesh > 0.5 * sigma0min_[i] || sigma0min_[i] < 0.) {
+          log<<"  WARNING: to use a METAD with a GRID and ADAPTIVE you need to set a Grid Spacing larger than half of the Gaussians \n";
+        }
       }
     }
     std::string funcl = getLabel() + ".bias";
