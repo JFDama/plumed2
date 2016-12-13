@@ -1506,7 +1506,9 @@ MetaD::MetaD(const ActionOptions &ao):
       if (adaptive_ == FlexibleBin::none) {
         if (mesh > 0.5 * sigma0_[i]) {
           log << "  WARNING: Using a METAD with a Grid Spacing larger than half of the Gaussians width can produce artifacts\n";
-        } else if(mesh > 0.5 * sigma0min_[i] || sigma0min_[i] < 0.) {
+        }
+      } else {
+        if (mesh > 0.5 * sigma0min_[i] || sigma0min_[i] < 0.) {
           log<<"  WARNING: to use a METAD with a GRID and ADAPTIVE you need to set a Grid Spacing larger than half of the Gaussians \n";
         }
       }
