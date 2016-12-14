@@ -554,7 +554,6 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.addFlag("PRINT_DOMAINS_SCALING", false, "print out the scaling functions for each metabasin metadynamics domain");
   keys.addFlag("PRINT_ADAPTIVE_DOMAINS_ENERGIES", false, "print out the scaling functions for each metabasin metadynamics domain");
   keys.addFlag("RESTART_FROM_GRID", false, "restart the simulation, but use input grids to restart rather than the old HILLS");
-  keys.add("optional","TARGET","target to a predefined distribution");
   keys.add("optional", "TEMP", "the system temperature - this is only needed if you are doing well-tempered metadynamics, transition-tempered metadynamics, acceleration, or adaptive metabasin metadynamics");
   keys.add("optional", "TAU", "in well tempered metadynamics, sets height to (kb*DeltaT*pace*timestep)/tau");
   keys.add("optional", "GRID_MIN", "the lower bounds for the grid");
@@ -2909,6 +2908,7 @@ void MetaD::update() {
   vector<double> cv(getNumberOfArguments());
   vector<double> thissigma;
   bool multivariate;
+
   // adding hills criteria (could be more complex though)
   bool nowAddAHill;
   if (getStep() % stride_ == 0 && !isFirstStep) {
@@ -2917,10 +2917,12 @@ void MetaD::update() {
     nowAddAHill = false;
     isFirstStep = false;
   }
+  
   for (unsigned i = 0; i < cv.size(); ++i) {
     cv[i] = getArgument(i);
   }
   double vbias = getBiasAndDerivatives(cv);
+  
   // if you use adaptive, call the FlexibleBin
   if (adaptive_ != FlexibleBin::none) {
     flexbin->update(nowAddAHill);
@@ -2928,6 +2930,7 @@ void MetaD::update() {
   } else {
     multivariate = false;
   };
+
   // When using adaptive domains metabasin metadynamics, record a histogram
   // in addition to the usual hills. These are not normed because this will
   // only be used through the log and normalization thus corresponds to an
@@ -2964,6 +2967,7 @@ void MetaD::update() {
       }
     }
   }
+
   if (nowAddAHill) { // probably this can be substituted with a signal
     // add a Gaussian
     double height = getHeight(cv);
@@ -2974,6 +2978,7 @@ void MetaD::update() {
     } else {
       thissigma = sigma0_;
     }
+
     // In case we use walkers_mpi, it is now necessary to communicate with other replicas.
     if (walkers_mpi) {
       // Allocate arrays to store all walkers hills
@@ -3091,7 +3096,7 @@ void MetaD::update() {
     max_bias_ = temp_max_bias;
     getPntrToComponent("maxbias")->set(max_bias_);
   }
-  if(getStep()%(stride_*rewf_ustride_)==0 && nowAddAHill && rewf_grid_.size()>0 ) computeReweightingFactor();
+  if(getStep() % (stride_ * rewf_ustride_) == 0 && nowAddAHill && rewf_grid_.size() > 0 ) computeReweightingFactor();
 }
 
 void MetaD::finiteDifferenceGaussian(const vector<double> &cv, const Gaussian &hill) {
