@@ -899,6 +899,10 @@ MetaD::MetaD(const ActionOptions &ao):
   if (stride_ <= 0) {
     error("frequency for hill addition is nonsensical");
   }
+  
+  parse("TARGET",targetfilename_);
+  if(targetfilename_.length() > 0 && kbt_==0.0)  error("with TARGET temperature must be specified");
+  
   double tau = 0.0;
   parse("TAU", tau);
   if (tau == 0.0) {
