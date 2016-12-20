@@ -360,8 +360,6 @@ class MetaD : public Bias {
   int wgridstride_;
   bool grid_;
   double height0_;
-  bool hasextgrid_;
-  Grid* ExtGrid_;
   std::string targetfilename_;
   Grid* TargetGrid_;
   double kbt_;
@@ -420,8 +418,6 @@ class MetaD : public Bias {
   bool print_adaptive_domains_energies_;
   OFile HistEnergyFile_;
   OFile HistBiasEnergyFile_;
-  bool restart_from_grid_;
-  bool restartedFromGrid;
   double* dp_;
   int adaptive_;
   FlexibleBin *flexbin;
@@ -553,7 +549,6 @@ void MetaD::registerKeywords(Keywords &keys) {
   keys.add("optional", "ADAPTIVE_DOMAINS_DOWNSAMPLING", "when creating scaling grids, add this ratio fewer hills to minimize performance costs");
   keys.addFlag("PRINT_DOMAINS_SCALING", false, "print out the scaling functions for each metabasin metadynamics domain");
   keys.addFlag("PRINT_ADAPTIVE_DOMAINS_ENERGIES", false, "print out the scaling functions for each metabasin metadynamics domain");
-  keys.addFlag("RESTART_FROM_GRID", false, "restart the simulation, but use input grids to restart rather than the old HILLS");
   keys.add("optional", "TEMP", "the system temperature - this is only needed if you are doing well-tempered metadynamics, transition-tempered metadynamics, acceleration, or adaptive metabasin metadynamics");
   keys.add("optional", "TAU", "in well tempered metadynamics, sets height to (kb*DeltaT*pace*timestep)/tau");
   keys.add("optional", "GRID_MIN", "the lower bounds for the grid");
@@ -596,9 +591,6 @@ MetaD::~MetaD() {
   }
   if (BiasGrid_) {
     delete BiasGrid_;
-  }
-  if (hasextgrid_) {
-    delete ExtGrid_;
   }
   if (TargetGrid_) {
     delete TargetGrid_;
@@ -675,8 +667,6 @@ MetaD::MetaD(const ActionOptions &ao):
   BiasGrid_(NULL), wgridstride_(0), grid_(false),
   // Metadynamics basic parameters
   height0_(std::numeric_limits<double>::max()), 
-  hasextgrid_(false),
-  ExtGrid_(NULL),
   TargetGrid_(NULL),
   kbt_(0.0),
   stride_(0), 
@@ -1096,11 +1086,6 @@ MetaD::MetaD(const ActionOptions &ao):
   string gridreadfilename_;
   parse("GRID_RFILE",gridreadfilename_);
   if(!grid_&&gridreadfilename_.length()>0) error("To read a grid you need first to define it!");
-
-  parseFlag("RESTART_FROM_GRID", restart_from_grid_);
-  if (restart_from_grid_ && gridreadfilename_.size() == 0) {
-    error("RESTART_FROM_GRID requires an input GRID_RFILE");
-  }
 
   if (grid_) { 
     parseVector("REWEIGHTING_NGRID", rewf_grid_); 
@@ -1542,8 +1527,8 @@ MetaD::MetaD(const ActionOptions &ao):
   // internal bias; this is necessary for methods that calculate 
   // bias-related quantities on-the-fly in calculation, such as TTMetaD
   // and metabasin metadynamics.
+  bool restartedFromGrid = false;
   if (gridreadfilename_.length() > 0) {
-    hasextgrid_ = true;
     // Read the grid in input, find the keys.
     IFile gridfile;
     gridfile.link(*this);
@@ -1553,54 +1538,70 @@ MetaD::MetaD(const ActionOptions &ao):
       error("The GRID file you want to read: " + gridreadfilename_ + ", cannot be found!");
     }
     std::string funcl = getLabel() + ".bias";
-    ExtGrid_ = Grid::create(funcl, getArguments(), gridfile, false, false, true);
+    BiasGrid_ = Grid::create(funcl, getArguments(), gridfile, gmin, gmax, gbin, sparsegrid, spline, true);
     gridfile.close();
     // Check for consistency between the external grid and the MetaD input specs.
-    if (ExtGrid_->getDimension() != getNumberOfArguments()) {
+    if (BiasGrid_->getDimension() != getNumberOfArguments()) {
       error("mismatch between dimensionality of input grid and number of arguments");
     }
     for (unsigned i = 0; i < getNumberOfArguments(); ++i) {
-      if (getPntrToArgument(i)->isPeriodic() != ExtGrid_->getIsPeriodic()[i]) {
+      if (getPntrToArgument(i)->isPeriodic() != BiasGrid_->getIsPeriodic()[i]) {
         error("periodicity mismatch between arguments and input bias");
       }
-    }
-    // Add this to the internal grid if one exists and erase it if so.
-    if (grid_) {
-      double temp_val = 0.0;
-      vector<double> temp_der(getNumberOfArguments());
-      // If the grids have identical coordinates, simply copy the old one point by point.
-      bool grid_coords_are_same = true;
-      for (unsigned i = 0; i < getNumberOfArguments(); i++) {
-        grid_coords_are_same = grid_coords_are_same && (BiasGrid_->getNbin()[i] == ExtGrid_->getNbin()[i]);
-        grid_coords_are_same = grid_coords_are_same && (BiasGrid_->getMin()[i] == ExtGrid_->getMin()[i]);
-        grid_coords_are_same = grid_coords_are_same && (BiasGrid_->getMax()[i] == ExtGrid_->getMax()[i]);
-      }
-      if (grid_coords_are_same) {
-        for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-          temp_val = ExtGrid_->getValueAndDerivatives(i, temp_der);
-          if (temp_val != 0.0) {
-            BiasGrid_->addValueAndDerivatives(i, temp_val, temp_der);
-          }
+      double a, b;
+      Tools::convert(gmin[i], a);
+      Tools::convert(gmax[i], b);
+      double mesh = (b - a) / ((double)gbin[i]);
+      if (adaptive_ == FlexibleBin::none) {
+        if (mesh > 0.5 * sigma0_[i]) {
+          log << "  WARNING: Using a METAD with a Grid Spacing larger than half of the Gaussians width can produce artifacts\n";
         }
-        log << "  Copied GRID_RFILE potential to bias grid without interpolation\n";
-      // If the grid coordinates are not identical, map points in the new grid to points 
-      // in the old grid, then copy an interpolated value.
       } else {
-        vector<double> temp_point(getNumberOfArguments());
-        for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-          BiasGrid_->getPoint(i, temp_point);
-          temp_val = ExtGrid_->getValueAndDerivatives(temp_point, temp_der);
-          if (temp_val != 0.0) {
-            BiasGrid_->addValueAndDerivatives(i, temp_val, temp_der);
-          }
+        if (mesh > 0.5 * sigma0min_[i] || sigma0min_[i] < 0.) {
+          log<<"  WARNING: to use a METAD with a GRID and ADAPTIVE you need to set a Grid Spacing larger than half of the Gaussians \n";
         }
-        log << "  Copied GRID_RFILE potential to bias grid using interpolation\n";
       }
-      delete ExtGrid_;
-      ExtGrid_ = NULL;
     }
-    log.printf("  Restarting from %s:", gridreadfilename_.c_str());                  
-    if (getRestart()) restartedFromGrid = true;
+    if (getRestart()) {
+      restartedFromGrid = true;
+      log.printf("  Restarting from %s:", gridreadfilename_.c_str());
+    } else {
+      log.printf("  Starting from %s:", gridreadfilename_.c_str());
+    }
+  }
+
+  // Finish initializing grid when no restart is available.
+  if (grid_ && !(gridreadfilename_.length() > 0)) {
+    // check for adaptive and sigma_min
+    if (sigma0min_.size() == 0 && adaptive_ != FlexibleBin::none) {
+      error("When using Adaptive Gaussians on a grid SIGMA_MIN must be specified");
+    }
+    // check for mesh and sigma size
+    for (unsigned i = 0; i < getNumberOfArguments(); i++) {
+      double a, b;
+      Tools::convert(gmin[i], a);
+      Tools::convert(gmax[i], b);
+      double mesh = (b - a) / ((double)gbin[i]);
+      if (mesh > 0.5 * sigma0_[i]) {
+        log << "  WARNING: Using a METAD with a Grid Spacing larger than half of the Gaussians width can produce artifacts\n";
+      }
+    }
+    std::string funcl = getLabel() + ".bias";
+    if (!sparsegrid) {
+      BiasGrid_ = new Grid(funcl, getArguments(), gmin, gmax, gbin, spline, true);
+    } else {
+      BiasGrid_ = new SparseGrid(funcl, getArguments(), gmin, gmax, gbin, spline, true);
+    }
+    std::vector<std::string> actualmin = BiasGrid_->getMin();
+    std::vector<std::string> actualmax = BiasGrid_->getMax();
+    for (unsigned i = 0; i < getNumberOfArguments(); i++) {
+      if (gmin[i] != actualmin[i]) {
+        log << "  WARNING: GRID_MIN[" << i << "] has been adjusted to " << actualmin[i] << " to fit periodicity\n";
+      }
+      if (gmax[i] != actualmax[i]) {
+        log << "  WARNING: GRID_MAX[" << i << "] has been adjusted to " << actualmax[i] << " to fit periodicity\n";
+      }
+    }
   }
 
   // Initialize and read a target experimental free energy (log distribution) if requested.
@@ -1755,9 +1756,9 @@ MetaD::MetaD(const ActionOptions &ao):
     if (ifile->FileExist(fname)) {
       ifile->open(fname);
       // Read the Gaussians in the file if and only if this is a restart.
-      if (getRestart() && !restart_from_grid_ && !restartedFromGrid) {
+      if (getRestart() && !restartedFromGrid) {
         if (use_adaptive_domains_) {
-          warning(" RESTART with adaptive domains does not exactly restart a simulation.\n To exactly restart adaptive domains calculations, provide the grid and the histogram from the end of the last run.");
+          warning(" RESTART from a hills file does not exactly restart a simulation with adaptive domains.\n To exactly restart adaptive domains calculations, provide the grid and the histogram from the end of the last run.");
         }
         log.printf("  Restarting from %s:", ifilesnames[i].c_str());
         readGaussians(ifiles[i]);
@@ -2195,17 +2196,6 @@ double MetaD::getBiasAndDerivatives(const vector<double> &cv, double* der) {
       }
     } else {
       bias = BiasGrid_->getValue(cv);
-    }
-  }
-  if (hasextgrid_) {
-    if (der) {
-      vector<double> vder(getNumberOfArguments());
-      bias += ExtGrid_->getValueAndDerivatives(cv, vder);
-      for (unsigned i = 0; i < getNumberOfArguments(); ++i) {
-        der[i] += vder[i];
-      }
-    } else {
-      bias += ExtGrid_->getValue(cv);
     }
   }
 
