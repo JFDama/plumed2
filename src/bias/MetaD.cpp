@@ -730,6 +730,8 @@ MetaD::MetaD(const ActionOptions &ao):
   uppI_(-1), lowI_(-1), doInt_(false),
   // Event clock initialization
   isFirstStep(true),
+  reweight_factor(0.0),
+  rewf_ustride_(1),
   last_step_warn_grid(0)
 
 {
@@ -3096,7 +3098,11 @@ void MetaD::update() {
     max_bias_ = temp_max_bias;
     getPntrToComponent("maxbias")->set(max_bias_);
   }
-  if(getStep() % (stride_ * rewf_ustride_) == 0 && nowAddAHill && rewf_grid_.size() > 0 ) computeReweightingFactor();
+  if(rewf_grid_.size() > 0) {
+    if (getStep() % (stride_ * rewf_ustride_) == 0 && nowAddAHill) {
+      computeReweightingFactor();
+    }
+  }
 }
 
 void MetaD::finiteDifferenceGaussian(const vector<double> &cv, const Gaussian &hill) {
