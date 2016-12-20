@@ -953,7 +953,7 @@ MetaD::MetaD(const ActionOptions &ao):
     error("If GRID_SPACING is present also GRID_MIN should be present");
   }
   if (gbin.size() != 0     && gmin.size() == 0) {
-    error("If GRID_SPACING is present also GRID_MIN should be present");
+    error("If GRID_BIN is present also GRID_MIN should be present");
   }
   if (gmin.size() != 0) {
     if (gbin.size() == 0 && gspacing.size() == 0) {
@@ -992,7 +992,7 @@ MetaD::MetaD(const ActionOptions &ao):
         double a, b;
         Tools::convert(gmin[i], a);
         Tools::convert(gmax[i], b);
-        unsigned n = ((b - a) / gspacing[i]);
+        unsigned n = ((b - a) / gspacing[i]) + 1;
         if (gbin[i] < n) {
           gbin[i] = n;
         }

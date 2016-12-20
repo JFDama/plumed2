@@ -317,6 +317,8 @@ void MovingRestraint::calculate(){
       for (unsigned i=0;i<narg;++i) {
         work[i] = 0;
       }
+      tot_work = 0;
+      getPntrToComponent("work")->set(tot_work);
     }
   }
 }
