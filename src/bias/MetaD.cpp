@@ -1017,7 +1017,6 @@ MetaD::MetaD(const ActionOptions &ao):
       error("grid filename not specified use GRID_WFILE");
     }
   }
-  parse("GRID_RFILE", gridreadfilename_);
   
   // Set metabasin metadynamics parameters
   parseFlag("USE_DOMAINS", use_domains_);
@@ -1083,8 +1082,7 @@ MetaD::MetaD(const ActionOptions &ao):
     }
   }
 
-  string gridreadfilename_;
-  parse("GRID_RFILE",gridreadfilename_);
+  parse("GRID_RFILE", gridreadfilename_);
   if(!grid_&&gridreadfilename_.length()>0) error("To read a grid you need first to define it!");
 
   if (grid_) { 
