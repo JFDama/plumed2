@@ -259,7 +259,9 @@ The kinetics of the transitions between basins can also be analysed on the fly a
 in \cite PRL230602. The flag ACCELERATION turn on accumulation of the acceleration
 factor that can then be used to determine the rate. This method can be used together
 with \ref COMMITTOR analysis to stop the simulation when the system get to the target basin.
-It must be used together with Well-Tempered Metadynamics.
+It must be used together with Well-Tempered Metadynamics. When calculating accelerations
+for a restarted simulation, use the RESTART_BOOST keyword to specify the mean acceleration
+over the previous portion of the simulation prior to restart.
 
 \par
 You can also provide a target distribution using the keyword TARGET
@@ -376,6 +378,7 @@ private:
   unsigned mpi_mw_;
   bool acceleration;
   double acc;
+  double initial_boost_;
   vector<IFile*> ifiles;
   vector<string> ifilesnames;
   double uppI_;
@@ -457,6 +460,7 @@ void MetaD::registerKeywords(Keywords& keys){
   keys.add("optional","SIGMA_MIN","the lower bounds for the sigmas (in CV units) when using adaptive hills. Negative number means no bounds ");
   keys.addFlag("WALKERS_MPI",false,"Switch on MPI version of multiple walkers - not compatible with WALKERS_* options other than WALKERS_DIR");
   keys.addFlag("ACCELERATION",false,"Set to TRUE if you want to compute the metadynamics acceleration factor.");  
+  keys.add("optional", "RESTART_BOOST", "use this boost factor from the beginning of a restarted simulation.");
   keys.use("RESTART");
   keys.use("UPDATE_FROM");
   keys.use("UPDATE_UNTIL");
@@ -490,7 +494,7 @@ flexbin(NULL),
 // Multiple walkers initialization
 mw_n_(1), mw_dir_(""), mw_id_(0), mw_rstride_(1),
 walkers_mpi(false), mpi_nw_(0), mpi_mw_(0),
-acceleration(false), acc(0.0),
+acceleration(false), acc(0.0), initial_boost_(1.0),
 // Interval initialization
 uppI_(-1), lowI_(-1), doInt_(false),
 isFirstStep(true),
@@ -708,8 +712,10 @@ last_step_warn_grid(0)
     doInt_=true;
   }
 
-  acceleration=false;
+  // Set special clock boost option.
   parseFlag("ACCELERATION",acceleration);
+  // Check for a restart boost if acceleration is active.
+  if (acceleration) parse("RESTART_BOOST", initial_boost_);
 
   checkRead();
 
@@ -775,6 +781,9 @@ last_step_warn_grid(0)
     if(!welltemp_) error("The calculation of the acceleration works only if Well-Tempered Metadynamics is on"); 
     log.printf("  calculation on the fly of the acceleration factor");
     addComponent("acc"); componentIsNotPeriodic("acc");
+    if (initial_boost_ != 1.0) {
+      log.printf("  Acceleration will initially be set to %g for this restarted simulation.\n", initial_boost_);
+    }
   }
 
   // for performance
@@ -1355,6 +1364,13 @@ void MetaD::calculate()
     acc += exp(ene/(kbt_));
     const double mean_acc = acc/((double) getStep());
     getPntrToComponent("acc")->set(mean_acc);
+  } else if (acceleration&&isFirstStep) {
+    if (getStep()==0) {
+      getPntrToComponent("acc")->set(1.0);
+    } else {
+      acc = initial_boost_ * (double) getStep();
+      getPntrToComponent("acc")->set(initial_boost_);
+    }
   }
   getPntrToComponent("work")->set(work_);
   // set Forces 
