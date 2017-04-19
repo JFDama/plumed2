@@ -1361,7 +1361,7 @@ void MetaD::calculate()
   if( rewf_grid_.size()>0 ) getPntrToComponent("rbias")->set(ene - reweight_factor);
   // calculate the acceleration factor
   if(acceleration&&!isFirstStep) {
-    acc += exp(ene/(kbt_));
+    acc += getStride() * exp(ene/(kbt_));
     const double mean_acc = acc/((double) getStep());
     getPntrToComponent("acc")->set(mean_acc);
   } else if (acceleration&&isFirstStep) {
