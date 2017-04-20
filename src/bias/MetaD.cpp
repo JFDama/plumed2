@@ -473,6 +473,7 @@ class MetaD : public Bias {
   vector<unsigned> getGaussianSupport(const Gaussian &);
   bool   scanOneHill(IFile *ifile,  vector<Value> &v, vector<double> &center, vector<double>  &sigma, double &height, bool &multivariate);
   void   computeReweightingFactor();
+  double   getAverageBias();
   std::string fmt;
 
   void   dumpBias();
@@ -2903,6 +2904,30 @@ void MetaD::update() {
   vector<double> thissigma;
   bool multivariate;
 
+
+  // Calculate new special bias quantities on the first step.
+  // First calculate the average bias if desired.
+  // This does not follow the Tiwary and Parrinello JPCB paper.
+  if (calc_average_bias_coft_ && isFirstStep) {
+    average_bias_coft_ = getAverageBias();
+    getPntrToComponent("coft")->set(average_bias_coft_);
+  }
+  // Next calculate the transition bias if desired.
+  if (calc_transition_bias_ && isFirstStep) {
+    transition_bias_ = getTransitionBarrierBias();
+    getPntrToComponent("transbias")->set(transition_bias_);
+  }
+  // Next calculate the maximum bias if desired.
+  if (calc_max_bias_ && isFirstStep) {
+    // Calculate the new 
+    double temp_max_bias = 0.0;
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      temp_max_bias = max(temp_max_bias, BiasGrid_->getValue(i));
+    }
+    max_bias_ = temp_max_bias;
+    getPntrToComponent("maxbias")->set(max_bias_);
+  }
+
   // adding hills criteria (could be more complex though)
   bool nowAddAHill;
   if (getStep() % stride_ == 0 && !isFirstStep) {
@@ -3050,29 +3075,7 @@ void MetaD::update() {
   // First calculate the average bias if desired.
   // This does not follow the Tiwary and Parrinello JPCB paper.
   if (calc_average_bias_coft_ && (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0))) {
-    // Calc sums rather than integrals because the normalization
-    // is irrelevant.
-    double exp_free_energy_sum = 0.0;
-    double exp_biased_free_energy_sum = 0.0;
-    // The formula depends on how the final free energy 
-    // should be inferred from the bias.
-    // For reasons I don't understand, the first branch of the if
-    // statement can't be followed unless I flush the log first.
-    log.flush();
-    if (wt_specs_.biasf == 1.0) {
-      for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-        double pt_bias = BiasGrid_->getValue(i);
-        exp_free_energy_sum += exp(pt_bias / kbt_);
-        exp_biased_free_energy_sum += 1.0;
-      }
-    } else if (wt_specs_.biasf > 1.0) {
-      for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
-        double pt_bias = BiasGrid_->getValue(i);
-        exp_free_energy_sum += exp(wt_specs_.biasf * pt_bias / (kbt_  * (wt_specs_.biasf - 1)));
-        exp_biased_free_energy_sum += exp(pt_bias / (kbt_ * (wt_specs_.biasf - 1)));
-      }
-    }
-    average_bias_coft_ = kbt_ * ( std::log(exp_free_energy_sum) - std::log(exp_biased_free_energy_sum));
+    average_bias_coft_ = getAverageBias();
     getPntrToComponent("coft")->set(average_bias_coft_);
   }
   // Next calculate the transition bias if desired.
@@ -3302,6 +3305,33 @@ void MetaD::computeReweightingFactor()
   comm.Sum( sum1 ); comm.Sum( sum2 );
   reweight_factor = kbt_ * std::log( sum1/sum2 );
   getPntrToComponent("rct")->set(reweight_factor);
+}
+
+double MetaD::getAverageBias()
+{
+  // Calc sums rather than integrals because the normalization
+  // is irrelevant.
+  double exp_free_energy_sum = 0.0;
+  double exp_biased_free_energy_sum = 0.0;
+  // The formula depends on how the final free energy 
+  // should be inferred from the bias.
+  // For reasons I don't understand, the first branch of the if
+  // statement can't be followed unless I flush the log first.
+  log.flush();
+  if (wt_specs_.biasf == 1.0) {
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      double pt_bias = BiasGrid_->getValue(i);
+      exp_free_energy_sum += exp(pt_bias / kbt_);
+      exp_biased_free_energy_sum += 1.0;
+    }
+  } else if (wt_specs_.biasf > 1.0) {
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      double pt_bias = BiasGrid_->getValue(i);
+      exp_free_energy_sum += exp(wt_specs_.biasf * pt_bias / (kbt_  * (wt_specs_.biasf - 1)));
+      exp_biased_free_energy_sum += exp(pt_bias / (kbt_ * (wt_specs_.biasf - 1)));
+    }
+  }
+  return kbt_ * ( std::log(exp_free_energy_sum) - std::log(exp_biased_free_energy_sum));
 }
 
 }
