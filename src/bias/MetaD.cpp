@@ -374,6 +374,9 @@ private:
   double dampfactor_;
   struct TemperingSpecs tt_specs_;
   struct TemperingSpecs gat_specs_;
+  string driving_restraint_argname_;
+  Value* driving_work_arg_;
+  Value* driving_in_equil_arg_;
   std::string targetfilename_;
   Grid* TargetGrid_;
   double kbt_;
@@ -460,6 +463,7 @@ void MetaD::registerKeywords(Keywords& keys) {
   for (size_t i = 0; i < n_tempering_options_; i++) {
     registerTemperingKeywords(tempering_names_[i][0], tempering_names_[i][1], keys);
   }
+  keys.add("optional", "DRIVING_RESTRAINT", "use driven metadynamics with this argument defining the steering action acting on the system (should be a MOVINGRESTRAINT)");
   keys.add("optional","TARGET","target to a predefined distribution");
   keys.add("optional","TEMP","the system temperature - this is only needed if you are doing well-tempered metadynamics");
   keys.add("optional","TAU","in well tempered metadynamics, sets height to (kb*DeltaT*pace*timestep)/tau");
@@ -661,6 +665,24 @@ MetaD::MetaD(const ActionOptions& ao):
       }
       transitionwells_.push_back(tempcoords);
     }
+  }
+
+  parse("DRIVING_RESTRAINT", driving_restraint_argname_);
+  if (driving_restraint_argname_.size() > 0) {
+    if (kbt_ == 0.0) {
+      error("Unless the MD engine passes the temperature to plumed, with driven metad you must specify it using TEMP");
+    }
+    // Find the Value* corresponding to the driving work argument.
+    vector<Value *> driving_work_arg_wrapper;
+    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".work"), driving_work_arg_wrapper);
+    driving_work_arg_ = driving_work_arg_wrapper[0];
+    vector<Value *> driving_in_equil_arg_wrapper;
+    interpretArgumentList(vector<string>(1, driving_restraint_argname_ + ".inequil"), driving_in_equil_arg_wrapper);
+    driving_in_equil_arg_ = driving_in_equil_arg_wrapper[0];
+    // Add a dependency on the corresponding ActionWithValue.
+    ActionWithValue* action = plumed.getActionSet().selectWithLabel<ActionWithValue*>(driving_restraint_argname_);
+    plumed_massert(action,"cannot find action named (in requestArguments - this is weird)" + driving_restraint_argname_);
+    addDependency(action);
   }
 
   parse("TARGET",targetfilename_);
@@ -874,6 +896,11 @@ MetaD::MetaD(const ActionOptions& ao):
     } else if (total_governing_deltaT_inv < 0.0 && greatest_alpha != least_alpha) {
       error("for stable tempering, the sum of the inverse Delta T parameters for the greatest asymptotic hill decay exponents must be greater than zero!");
     }
+  }
+
+  // Driven metadynamics
+  if (driving_restraint_argname_.length() > 0) {
+    log.printf("  Using driven metadynamics with steered MD work given by %s \n", driving_restraint_argname_.c_str());
   }
 
   if(doInt_) log.printf("  Upper and Lower limits boundaries for the bias are activated at %f - %f\n", lowI_, uppI_);
@@ -1164,6 +1191,8 @@ MetaD::MetaD(const ActionOptions& ao):
   }
   if(tt_specs_.is_active || gat_specs_.is_active) log << plumed.cite(
           "Dama, Parrinello, and Voth, Phys. Rev. Lett. 112, 240602 (2014)");
+  if (driving_restraint_argname_.size() > 0) log << plumed.cite(
+          "Moradi and Tajkhorshid, J. Phys. Chem. Lett. 4, 1882 (2013)");
   if(mw_n_>1||walkers_mpi) log<<plumed.cite(
                                   "Raiteri, Laio, Gervasio, Micheletti, and Parrinello, J. Phys. Chem. B 110, 3533 (2006)");
   if(adaptive_!=FlexibleBin::none) log<<plumed.cite(
@@ -1555,6 +1584,13 @@ double MetaD::getHeight(const vector<double>& cv)
   if (gat_specs_.is_active) {
     double coft = reweighting_bias_ave_;
     temperHeight(height, gat_specs_, coft);
+  }
+  if (driving_restraint_argname_.size() > 0) {
+    if (driving_in_equil_arg_->get() != 1.0) {
+      height *= exp(-driving_work_arg_->get() / kbt_);
+    } else {
+      height = 0.0;
+    }
   }
   if(TargetGrid_) {
     double f=TargetGrid_->getValue(cv)-TargetGrid_->getMaxValue();
