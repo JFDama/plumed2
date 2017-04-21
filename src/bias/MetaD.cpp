@@ -646,9 +646,12 @@ void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
   } else {
     parse("BIASFACTOR", t_specs.biasf);
   }
-  if (t_specs.biasf != 1.0) {
+  if (t_specs.biasf != -1.0) {
     if (kbt_ == 0.0) {
       error("Unless the MD engine passes the temperature to plumed, with tempered metad you must specify it using TEMP");
+    }
+    if (t_specs.biasf == 1.0) {
+      error("A bias factor of 1 corresponds to zero delta T and zero hill size, so it is not allowed.");
     }
     t_specs.is_active = true;
     parse(t_specs.name_stem + "BIASTHRESHOLD", t_specs.threshold);
@@ -671,10 +674,10 @@ MetaD::MetaD(const ActionOptions &ao):
   TargetGrid_(NULL),
   kbt_(0.0),
   stride_(0), 
-  wt_specs_(false, "WT", "Well Tempered", 1.0, 0.0, 1.0),
-  gat_specs_(false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0),
-  gmt_specs_(false, "GMT", "Global Maximum Tempered", 1.0, 0.0, 1.0),
-  tt_specs_(false, "TT", "Transition Tempered", 1.0, 0.0, 1.0),
+  wt_specs_(false, "WT", "Well Tempered", -1.0, 0.0, 1.0),
+  gat_specs_(false, "GAT", "Global Average Tempered", -1.0, 0.0, 1.0),
+  gmt_specs_(false, "GMT", "Global Maximum Tempered", -1.0, 0.0, 1.0),
+  tt_specs_(false, "TT", "Transition Tempered", -1.0, 0.0, 1.0),
   benthic_toleration_(false),
   benthic_tol_number_(0.0),
   benthic_erosion_(false),
