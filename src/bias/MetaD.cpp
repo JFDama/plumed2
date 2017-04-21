@@ -1783,6 +1783,19 @@ MetaD::MetaD(const ActionOptions &ao):
 
   // Calculate the Tiwary-Parrinello reweighting factor if we are restarting from previous hills
   if(getRestart() && rewf_grid_.size() > 0 ) computeReweightingFactor();
+  // Calculate all special bias quantities desired if restarting with nonzero bias.
+  if(getRestart() && calc_average_bias_coft_) {
+    average_bias_coft_ = getAverageBias();
+    getPntrToComponent("coft")->set(average_bias_coft_);
+  }
+  if(getRestart() && calc_max_bias_) {
+    max_bias_ = BiasGrid_->getMaxValue();
+    getPntrToComponent("maxbias")->set(max_bias_);
+  }
+  if(getRestart() && calc_transition_bias_) {
+    transition_bias_ = getTransitionBarrierBias();
+    getPntrToComponent("transbias")->set(transition_bias_);
+  }
 
   // A barrier is needed when using walkers_mpi
   // to be sure that all files have been read before
