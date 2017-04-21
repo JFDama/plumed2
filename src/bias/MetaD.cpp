@@ -369,10 +369,11 @@ private:
   bool grid_;
   double height0_;
   double biasf_;
-  static const size_t n_tempering_options_ = 1;
-  static const string tempering_names_[1][2];
+  static const size_t n_tempering_options_ = 2;
+  static const string tempering_names_[2][2];
   double dampfactor_;
   struct TemperingSpecs tt_specs_;
+  struct TemperingSpecs gat_specs_;
   std::string targetfilename_;
   Grid* TargetGrid_;
   double kbt_;
@@ -497,7 +498,7 @@ void MetaD::registerKeywords(Keywords& keys) {
   keys.use("UPDATE_UNTIL");
 }
 
-const std::string MetaD::tempering_names_[1][2] = {{"TT", "transition tempered"}};
+const std::string MetaD::tempering_names_[2][2] = {{"TT", "transition tempered"}, {"GAT", "global average tempered"}};
 
 void MetaD::registerTemperingKeywords(const std::string name_stem, const std::string name, Keywords &keys) {
   keys.add("optional", name_stem + "BIASFACTOR", "use " + name + " metadynamics with this biasfactor.  Please note you must also specify temp");
@@ -526,6 +527,7 @@ MetaD::MetaD(const ActionOptions& ao):
 // Metadynamics basic parameters
   height0_(std::numeric_limits<double>::max()), biasf_(-1.0), dampfactor_(0.0),
   tt_specs_(false, "TT", "Transition Tempered", 1.0, 0.0, 1.0),
+  gat_specs_(false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0),
   TargetGrid_(NULL),
   kbt_(0.0),
   stride_(0), welltemp_(false),
@@ -642,6 +644,11 @@ MetaD::MetaD(const ActionOptions& ao):
   // Transition wells are read later via calc_transition_bias_.
   readTemperingSpecs(tt_specs_);
   if (tt_specs_.is_active) calc_transition_bias_ = true;
+  // Set global average tempering parameters.
+  // The average bias calculation can be customized using
+  // REWEIGHTING_NGRID and REWEIGHTING_NHILLS.
+  readTemperingSpecs(gat_specs_);
+  if (gat_specs_.is_active) calc_reweighting_bias_ave_ = true;
 
   // If any previous option specified to calculate a transition bias,
   // now read the transition wells for that quantity.
@@ -809,6 +816,15 @@ MetaD::MetaD(const ActionOptions& ao):
       error(" transition tempering requires calculation of a transition bias");
     }
   }
+  // Global average tempered metadynamics options
+  if (gat_specs_.is_active) {
+    logTemperingSpecs(gat_specs_);
+    // Check that the appropriate transition bias quantity is calculated.
+    // (Should never trip, given that the flag is automatically set.)
+    if (!calc_reweighting_bias_ave_) {
+      error(" global average tempering requires calculation of a transition bias");
+    }
+  }
 
   // Overall tempering sanity check (this gets tricky when multiple are active).
   // When multiple temperings are active, it's fine to have one tempering attempt
@@ -819,28 +835,32 @@ MetaD::MetaD(const ActionOptions& ao):
   // The alpha parameter allows hills to decay as 1/t^alpha instead of 1/t,
   // a slower decay, so as t -> infinity, only the temperings with the largest
   // alphas govern the final asymptotic decay. (Alpha helps prevent false convergence.)
-  if (welltemp_ || dampfactor_ > 0.0 || tt_specs_.is_active) {
+  if (welltemp_ || dampfactor_ > 0.0 || tt_specs_.is_active || gat_specs_.is_active) {
     // Determine the number of active temperings.
     int n_active = 0;
     if (welltemp_) n_active++;
     if (dampfactor_ > 0.0) n_active++;
     if (tt_specs_.is_active) n_active++;
+    if (gat_specs_.is_active) n_active++;
     // Find the greatest alpha.
     double greatest_alpha = 0.0;
     if (welltemp_) greatest_alpha = max(greatest_alpha, 1.0);
     if (dampfactor_ > 0.0) greatest_alpha = max(greatest_alpha, 1.0);
     if (tt_specs_.is_active) greatest_alpha = max(greatest_alpha, tt_specs_.alpha);
+    if (gat_specs_.is_active) greatest_alpha = max(greatest_alpha, gat_specs_.alpha);
     // Find the least alpha.
     double least_alpha = 1.0;
     if (welltemp_) least_alpha = min(least_alpha, 1.0);
     if (dampfactor_ > 0.0) least_alpha = min(least_alpha, 1.0);
     if (tt_specs_.is_active) least_alpha = min(least_alpha, tt_specs_.alpha);
+    if (gat_specs_.is_active) least_alpha = min(least_alpha, gat_specs_.alpha);
     // Find the inverse harmonic average of the delta T parameters for all
     // of the temperings with the greatest alpha values.
     double total_governing_deltaT_inv = 0.0;
     if (welltemp_ && 1.0 == greatest_alpha && biasf_ != 1.0) total_governing_deltaT_inv += 1.0 / (biasf_ - 1.0);
     if (dampfactor_ > 0.0 && 1.0 == greatest_alpha) total_governing_deltaT_inv += 1.0 / (dampfactor_);
     if (tt_specs_.is_active && tt_specs_.alpha == greatest_alpha) total_governing_deltaT_inv += 1.0 / (tt_specs_.biasf - 1.0);
+    if (gat_specs_.is_active && gat_specs_.alpha == greatest_alpha) total_governing_deltaT_inv += 1.0 / (gat_specs_.biasf - 1.0);
     // Give a newbie-friendly error message for people using one tempering if
     // only one is active.
     if (n_active == 1 && total_governing_deltaT_inv < 0.0) {
@@ -1141,8 +1161,9 @@ MetaD::MetaD(const ActionOptions& ao):
                        "Barducci, Bussi, and Parrinello, Phys. Rev. Lett. 100, 020603 (2008)");
   if(tt_specs_.is_active) {
     log << plumed.cite("Dama, Rotskoff, Parrinello, and Voth, J. Chem. Theory Comput. 10, 3626 (2014)");
-    log << plumed.cite("Dama, Parrinello, and Voth, Phys. Rev. Lett. 112, 240602 (2014)");
   }
+  if(tt_specs_.is_active || gat_specs_.is_active) log << plumed.cite(
+          "Dama, Parrinello, and Voth, Phys. Rev. Lett. 112, 240602 (2014)");
   if(mw_n_>1||walkers_mpi) log<<plumed.cite(
                                   "Raiteri, Laio, Gervasio, Micheletti, and Parrinello, J. Phys. Chem. B 110, 3533 (2006)");
   if(adaptive_!=FlexibleBin::none) log<<plumed.cite(
@@ -1530,6 +1551,10 @@ double MetaD::getHeight(const vector<double>& cv)
   if (tt_specs_.is_active) {
     double vbarrier = transition_bias_;
     temperHeight(height, tt_specs_, vbarrier);
+  }
+  if (gat_specs_.is_active) {
+    double coft = reweighting_bias_ave_;
+    temperHeight(height, gat_specs_, coft);
   }
   if(TargetGrid_) {
     double f=TargetGrid_->getValue(cv)-TargetGrid_->getMaxValue();
