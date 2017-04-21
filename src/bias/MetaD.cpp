@@ -526,8 +526,8 @@ MetaD::MetaD(const ActionOptions& ao):
   BiasGrid_(NULL), wgridstride_(0), grid_(false),
 // Metadynamics basic parameters
   height0_(std::numeric_limits<double>::max()), biasf_(-1.0), dampfactor_(0.0),
-  tt_specs_(false, "TT", "Transition Tempered", 1.0, 0.0, 1.0),
-  gat_specs_(false, "GAT", "Global Average Tempered", 1.0, 0.0, 1.0),
+  tt_specs_(false, "TT", "Transition Tempered", -1.0, 0.0, 1.0),
+  gat_specs_(false, "GAT", "Global Average Tempered", -1.0, 0.0, 1.0),
   TargetGrid_(NULL),
   kbt_(0.0),
   stride_(0), welltemp_(false),
