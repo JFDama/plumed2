@@ -1222,6 +1222,9 @@ void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
     if (kbt_ == 0.0) {
       error("Unless the MD engine passes the temperature to plumed, with tempered metad you must specify it using TEMP");
     }
+    if (t_specs.biasf == 1.0) {
+      error("A bias factor of 1 corresponds to zero delta T and zero hill size, so it is not allowed.");
+    }
     t_specs.is_active = true;
     parse(t_specs.name_stem + "BIASTHRESHOLD", t_specs.threshold);
     if (t_specs.threshold < 0.0) {
