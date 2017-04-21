@@ -160,6 +160,8 @@ public:
                       const std::vector<unsigned>&,bool,bool,bool);
 /// get grid size
   virtual index_t getSize() const;
+  index_t getMaxSize() const;
+
 /// get grid value
   virtual double getValue(index_t index) const;
   virtual double getValue(const std::vector<unsigned> & indices) const;
@@ -239,7 +241,6 @@ public:
     Grid(funcl,args,gmin,gmax,nbin,dospline,usederiv,false) {}
 
   index_t getSize() const;
-  index_t getMaxSize() const;
 
 /// this is to access to Grid:: version of these methods (allowing overloading of virtual methods)
   using Grid::getValue;

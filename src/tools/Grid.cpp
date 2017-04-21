@@ -163,6 +163,10 @@ Grid::index_t Grid::getSize() const {
   return maxsize_;
 }
 
+Grid::index_t Grid::getMaxSize() const {
+  return maxsize_;
+}
+
 unsigned Grid::getDimension() const {
   return dimension_;
 }
@@ -697,10 +701,6 @@ void SparseGrid::clear() {
 
 Grid::index_t SparseGrid::getSize() const {
   return map_.size();
-}
-
-Grid::index_t SparseGrid::getMaxSize() const {
-  return maxsize_;
 }
 
 double Grid::getDifferenceFromContour( const std::vector<double>& x, std::vector<double>& der ) const {
