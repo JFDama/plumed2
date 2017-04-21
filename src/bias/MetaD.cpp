@@ -353,7 +353,7 @@ private:
     double biasf;
     double threshold;
     double alpha;
-    inline TemperingSpecs(bool is_active, std::string name_stem, std::string name, double biasf, double threshold, double alpha) :
+    inline TemperingSpecs(bool is_active, const std::string &name_stem, const std::string &name, const double biasf, const double threshold, const double alpha) :
       is_active(is_active), name_stem(name_stem), name(name), biasf(biasf), threshold(threshold), alpha(alpha)
     {}
   };
@@ -414,7 +414,7 @@ private:
 
   static void   registerTemperingKeywords(const std::string &name_stem, const std::string &name, Keywords &keys);
   void   readTemperingSpecs(TemperingSpecs &t_specs);
-  void   logTemperingSpecs(TemperingSpecs &t_specs);
+  void   logTemperingSpecs(const TemperingSpecs &t_specs) const;
   void   readGaussians(IFile*);
   bool   readChunkOfGaussians(IFile *ifile, unsigned n);
   void   writeGaussian(const Gaussian&,OFile&);
@@ -1237,7 +1237,7 @@ void MetaD::readTemperingSpecs(TemperingSpecs &t_specs) {
   }
 }
 
-void MetaD::logTemperingSpecs(TemperingSpecs &t_specs) {
+void MetaD::logTemperingSpecs(const TemperingSpecs &t_specs) const {
   log.printf("  %s bias factor %f\n", t_specs.name.c_str(), t_specs.biasf);
   log.printf("  KbT %f\n", kbt_);
   if (t_specs.threshold != 0.0) log.printf("  %s bias threshold %f\n", t_specs.name.c_str(), t_specs.threshold);
