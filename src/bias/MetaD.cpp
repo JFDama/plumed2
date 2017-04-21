@@ -412,7 +412,7 @@ private:
   double work_;
   long int last_step_warn_grid;
 
-  static void   registerTemperingKeywords(const std::string name_stem, const std::string name, Keywords &keys);
+  static void   registerTemperingKeywords(const std::string &name_stem, const std::string &name, Keywords &keys);
   void   readTemperingSpecs(TemperingSpecs &t_specs);
   void   logTemperingSpecs(TemperingSpecs &t_specs);
   void   readGaussians(IFile*);
@@ -504,7 +504,7 @@ void MetaD::registerKeywords(Keywords& keys) {
 
 const std::string MetaD::tempering_names_[2][2] = {{"TT", "transition tempered"}, {"GAT", "global average tempered"}};
 
-void MetaD::registerTemperingKeywords(const std::string name_stem, const std::string name, Keywords &keys) {
+void MetaD::registerTemperingKeywords(const std::string &name_stem, const std::string &name, Keywords &keys) {
   keys.add("optional", name_stem + "BIASFACTOR", "use " + name + " metadynamics with this biasfactor.  Please note you must also specify temp");
   keys.add("optional", name_stem + "BIASTHRESHOLD", "use " + name + " metadynamics with this bias threshold.  Please note you must also specify " + name_stem + "BIASFACTOR");
   keys.add("optional", name_stem + "ALPHA", "use " + name + " metadynamics with this hill size decay exponent parameter.  Please note you must also specify " + name_stem + "BIASFACTOR");
