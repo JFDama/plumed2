@@ -380,6 +380,8 @@ private:
   double max_bias_;
   bool calc_transition_bias_;
   double transition_bias_;
+  bool calc_reweighting_bias_ave_;
+  double reweighting_bias_ave_;
   vector<vector<double> > transitionwells_;
   vector<IFile*> ifiles;
   vector<string> ifilesnames;
@@ -387,7 +389,6 @@ private:
   double lowI_;
   bool doInt_;
   bool isFirstStep;
-  double reweight_factor;
   vector<unsigned> rewf_grid_;
   unsigned rewf_ustride_;
   double work_;
@@ -404,6 +405,7 @@ private:
   vector<unsigned> getGaussianSupport(const Gaussian&);
   bool   scanOneHill(IFile *ifile,  vector<Value> &v, vector<double> &center, vector<double>  &sigma, double &height, bool &multivariate);
   void   computeReweightingFactor();
+  double getReweightingBiasAve();
   double getTransitionBarrierBias();
   string fmt;
 
@@ -420,9 +422,9 @@ PLUMED_REGISTER_ACTION(MetaD,"METAD")
 
 void MetaD::registerKeywords(Keywords& keys) {
   Bias::registerKeywords(keys);
-  keys.addOutputComponent("rbias","REWEIGHTING_NGRID","the instantaneous value of the bias normalized using the \\f$c(t)\\f$ reweighting factor [rbias=bias-c(t)]."
+  keys.addOutputComponent("rbias","CALC_REWEIGHTING_BIAS_AVE","the instantaneous value of the bias normalized using the \\f$c(t)\\f$ reweighting factor [rbias=bias-c(t)]."
                           "This component can be used to obtain a reweighted histogram.");
-  keys.addOutputComponent("rct","REWEIGHTING_NGRID","the reweighting factor \\f$c(t)\\f$.");
+  keys.addOutputComponent("rct","CALC_REWEIGHTING_BIAS_AVE","the reweighting factor \\f$c(t)\\f$.");
   keys.addOutputComponent("work","default","accumulator for work");
   keys.addOutputComponent("acc","ACCELERATION","the metadynamics acceleration factor");
   keys.addOutputComponent("maxbias", "CALC_MAX_BIAS", "the maximum of the metadynamics V(s, t)");
@@ -468,6 +470,7 @@ void MetaD::registerKeywords(Keywords& keys) {
   keys.addFlag("CALC_MAX_BIAS", false, "Set to TRUE if you want to compute the maximum of the metadynamics V(s, t)");
   keys.addFlag("CALC_TRANSITION_BIAS", false, "Set to TRUE if you want to compute a metadynamics transition bias V*(t)");
   keys.add("numbered", "TRANSITIONWELL", "This keyword appears multiple times as TRANSITIONWELLx with x=0,1,2,...,n. Each specifies the coordinates for one well as in transition-tempered metadynamics. At least one must be provided.");
+  keys.addFlag("CALC_REWEIGHTING_BIAS_AVE", false, "Set to TRUE if you want to compute a metadynamics transition bias V*(t)");
   keys.use("RESTART");
   keys.use("UPDATE_FROM");
   keys.use("UPDATE_UNTIL");
@@ -504,10 +507,10 @@ MetaD::MetaD(const ActionOptions& ao):
   acceleration(false), acc(0.0),
   calc_max_bias_(false), max_bias_(0.0),
   calc_transition_bias_(false), transition_bias_(0.0),
+  calc_reweighting_bias_ave_(false), reweighting_bias_ave_(0.0),
 // Interval initialization
   uppI_(-1), lowI_(-1), doInt_(false),
   isFirstStep(true),
-  reweight_factor(0.0),
   rewf_ustride_(1),
   work_(0),
   last_step_warn_grid(0)
@@ -577,6 +580,7 @@ MetaD::MetaD(const ActionOptions& ao):
   // relevance for tempering and event-driven logic as well.)
   parseFlag("CALC_MAX_BIAS", calc_max_bias_);
   parseFlag("CALC_TRANSITION_BIAS", calc_transition_bias_);
+  parseFlag("CALC_REWEIGHTING_BIAS_AVE", calc_reweighting_bias_ave_);
 
   std::vector<double> rect_biasf_;
   parseVector("RECT",rect_biasf_);
@@ -705,14 +709,15 @@ MetaD::MetaD(const ActionOptions& ao):
 
   if(grid_) {
     parseVector("REWEIGHTING_NGRID",rewf_grid_);
-    if(rewf_grid_.size()>0 && rewf_grid_.size()!=getNumberOfArguments()) {
+    if (rewf_grid_.size() > 0) calc_reweighting_bias_ave_ = true;
+    if(rewf_grid_.size() > 0 && rewf_grid_.size()!=getNumberOfArguments()) {
       error("size mismatch for REWEIGHTING_NGRID keyword");
     } else if(rewf_grid_.size()==getNumberOfArguments()) {
       for(unsigned j=0; j<getNumberOfArguments(); ++j) {
         if( !getPntrToArgument(j)->isPeriodic() ) rewf_grid_[j] += 1;
       }
     }
-    if(adaptive_==FlexibleBin::diffusion || adaptive_==FlexibleBin::geometry) warning("reweighting has not been proven to work with adaptive Gaussians");
+    if(rewf_grid_.size() > 0 && (adaptive_ == FlexibleBin::diffusion || adaptive_==FlexibleBin::geometry)) warning("reweighting has not been proven to work with adaptive Gaussians");
     rewf_ustride_=50; parse("REWEIGHTING_NHILLS",rewf_ustride_);
   }
   if(dampfactor_>0.0) {
@@ -797,12 +802,6 @@ MetaD::MetaD(const ActionOptions& ao):
     }
   }
 
-  if( rewf_grid_.size()>0 ) {
-    addComponent("rbias"); componentIsNotPeriodic("rbias");
-    addComponent("rct"); componentIsNotPeriodic("rct");
-    log.printf("  the c(t) reweighting factor will be calculated every %u hills\n",rewf_ustride_);
-    getPntrToComponent("rct")->set(reweight_factor);
-  }
   addComponent("work"); componentIsNotPeriodic("work");
 
   if(acceleration) {
@@ -839,6 +838,13 @@ MetaD::MetaD(const ActionOptions& ao):
         if (transitionwells_[i][j] < min || transitionwells_[i][j] > max) error(" transition well is not in grid");
       }
     }
+  }
+  if (calc_reweighting_bias_ave_) {
+    log.printf("  calculation on the fly of the reweighting average bias c(t)\n");
+    addComponent("rbias"); componentIsNotPeriodic("rbias");
+    addComponent("rct"); componentIsNotPeriodic("rct");
+    log.printf("  the c(t) reweighting factor will be calculated every %u hills\n",rewf_ustride_);
+    getPntrToComponent("rct")->set(reweighting_bias_ave_);
   }
 
   // for performance
@@ -977,7 +983,10 @@ MetaD::MetaD(const ActionOptions& ao):
   }
 
   // Calculate the Tiwary-Parrinello reweighting factor if we are restarting from previous hills
-  if(getRestart() && rewf_grid_.size()>0 ) computeReweightingFactor();
+  if(getRestart() && calc_reweighting_bias_ave_) {
+    reweighting_bias_ave_ = getReweightingBiasAve();
+    getPntrToComponent("rct")->set(reweighting_bias_ave_);
+  }
   // Calculate all special bias quantities desired if restarting with nonzero bias.
   if(getRestart() && calc_max_bias_) {
     max_bias_ = BiasGrid_->getMaxValue();
@@ -1424,7 +1433,7 @@ void MetaD::calculate()
   }
 
   setBias(ene);
-  if( rewf_grid_.size()>0 ) getPntrToComponent("rbias")->set(ene - reweight_factor);
+  if( rewf_grid_.size()>0 ) getPntrToComponent("rbias")->set(ene - reweighting_bias_ave_);
   // calculate the acceleration factor
   if(acceleration&&!isFirstStep) {
     acc += exp(ene/(kbt_));
@@ -1567,7 +1576,10 @@ void MetaD::update() {
   }
   // Recalculate special bias quantities whenever the bias has been changed by the update.
   bool bias_has_changed = (nowAddAHill || (mw_n_ > 1 && getStep() % mw_rstride_ == 0));
-  if(getStep()%(stride_*rewf_ustride_)==0 && nowAddAHill && rewf_grid_.size()>0 ) computeReweightingFactor();
+  if(calc_reweighting_bias_ave_ && getStep() % (stride_ * rewf_ustride_) == 0) {
+    reweighting_bias_ave_ = getReweightingBiasAve();
+    getPntrToComponent("rct")->set(reweighting_bias_ave_);
+  }
   if (calc_max_bias_ && bias_has_changed) {
     max_bias_ = BiasGrid_->getMaxValue();
     getPntrToComponent("maxbias")->set(max_bias_);
@@ -1668,7 +1680,7 @@ void MetaD::computeReweightingFactor()
   }
 
   // Now sum over whole grid
-  reweight_factor=0.0; double* der=new double[ncv]; std::vector<unsigned> t_index( ncv );
+  reweighting_bias_ave_=0.0; double* der=new double[ncv]; std::vector<unsigned> t_index( ncv );
   double sum1=0.0; double sum2=0.0;
   double afactor = biasf_ / (kbt_*(biasf_-1.0)); double afactor2 = 1.0 / (kbt_*(biasf_-1.0));
   unsigned rank=comm.Get_rank(), stride=comm.Get_size();
@@ -1686,8 +1698,42 @@ void MetaD::computeReweightingFactor()
   }
   delete [] der;
   comm.Sum( sum1 ); comm.Sum( sum2 );
-  reweight_factor = kbt_ * std::log( sum1/sum2 );
-  getPntrToComponent("rct")->set(reweight_factor);
+  reweighting_bias_ave_ = kbt_ * std::log( sum1/sum2 );
+  getPntrToComponent("rct")->set(reweighting_bias_ave_);
+}
+
+double MetaD::getReweightingBiasAve()
+{
+  // If using the REWEIGHTING_NGRID option,
+  // calculate that way.
+  if (rewf_grid_.size() != 0) {
+    computeReweightingFactor();
+    return reweighting_bias_ave_;
+  }
+  // Otherwise, calculate the average using the grid spacing as default.
+  // Calc sums rather than integrals because the normalization
+  // is irrelevant.
+  double exp_free_energy_sum = 0.0;
+  double exp_biased_free_energy_sum = 0.0;
+  // The formula depends on how the final free energy
+  // should be inferred from the bias.
+  if (biasf_ == -1.0) {
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      double pt_bias = BiasGrid_->getValue(i);
+      exp_free_energy_sum += exp(pt_bias / kbt_);
+      exp_biased_free_energy_sum += 1.0;
+    }
+  } else if (biasf_ > 1.0) {
+    for (Grid::index_t i = 0; i < BiasGrid_->getMaxSize(); i++) {
+      double pt_bias = BiasGrid_->getValue(i);
+      exp_free_energy_sum += exp(biasf_ * pt_bias / (kbt_  * (biasf_ - 1)));
+      exp_biased_free_energy_sum += exp(pt_bias / (kbt_ * (biasf_ - 1)));
+    }
+  } else {
+    exp_free_energy_sum = 1.0;
+    exp_biased_free_energy_sum = 1.0;
+  }
+  return kbt_ * ( std::log(exp_free_energy_sum) - std::log(exp_biased_free_energy_sum));
 }
 
 double MetaD::getTransitionBarrierBias() {
