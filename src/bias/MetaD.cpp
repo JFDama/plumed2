@@ -3278,10 +3278,10 @@ void MetaD::dumpGrid(Grid *grid, OFile &gridfile) {
 }
 
 void MetaD::logTempering(TemperingSpecs &t_specs) {
-  log.printf("  %s bias factor %f\n", t_specs.name.c_str(), t_specs_.biasf);
+  log.printf("  %s bias factor %f\n", t_specs.name.c_str(), t_specs.biasf);
   log.printf("  KbT %f\n", kbt_);
-  if (t_specs_.threshold != 0.0) log.printf("  %s bias threshold %f\n", t_specs.name.c_str(), t_specs_.threshold);
-  if (t_specs_.alpha != 1.0) log.printf("  %s decay shape parameter alpha %f\n", t_specs.name.c_str(), t_specs_.alpha);
+  if (t_specs.threshold != 0.0) log.printf("  %s bias threshold %f\n", t_specs.name.c_str(), t_specs.threshold);
+  if (t_specs.alpha != 1.0) log.printf("  %s decay shape parameter alpha %f\n", t_specs.name.c_str(), t_specs.alpha);
 }
 
 void MetaD::computeReweightingFactor()
